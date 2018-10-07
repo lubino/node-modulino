@@ -1,0 +1,32 @@
+{
+  "name": "modulino",
+  "version": "1.0.0",
+  "description": "Simple NodeJS Application Server",
+  "main": "modulino.js",
+  "scripts": {
+  },
+  "author": "Lubos Strapko",
+  "license": "MIT License",
+  "peerDependencies": {
+  },
+  "devDependencies": {
+  },
+  "dependencies": {
+    "nodemailer": "^4.6.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lubino/node-modulino.git"
+  },
+  "keywords": [
+    "ES6",
+    "AS",
+    "server",
+    "servlets",
+    "express"
+  ],
+  "bugs": {
+    "url": "https://github.com/lubino/node-modulino/issues"
+  },
+  "homepage": "https://github.com/lubino/node-modulino#readme"
+}
