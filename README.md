@@ -45,7 +45,7 @@ node example.js
 
 Open the [test](http://localhost:8000/test) service.
 
-You can edit file **web/test.mod.js** without any server restarts and checks if your service is changing result.
+You can edit file **web/test.mod.js** without any server restarts and check that your service is changing results.
 
 **Notice:** This module has 'nodemailer' NPM dependency.
 
