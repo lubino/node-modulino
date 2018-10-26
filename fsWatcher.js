@@ -1,5 +1,4 @@
 const fs = require('fs');
-const {runAfterAllCycles} = require('./cycles');
 
 function removeTree(changePath, path, subTree, name) {
     const item = subTree[name];
@@ -20,39 +19,54 @@ function removeTree(changePath, path, subTree, name) {
     }
 }
 
-function fsStat(changePath, root, path, subTree, name, cb) {
+const fsStat = async (changePath, dirPath, path, files, name, watchers) => {
     const subPath = path + "/" + name;
-    fs.stat(root + subPath, (err, stats) => {
-        if (err) {
-            removeTree(changePath, subPath, subTree, name);
-            cb && cb();
-        } else if (stats.isDirectory()) {
+    try {
+        const stats = await new Promise((resolve, reject) => {
+            fs.stat(dirPath + subPath, (err, stats) => err ? reject(err) : resolve(stats))
+        });
+        if (stats.isDirectory()) {
             changePath(subPath, "cd");
             const newTree = {};
-            subTree[name] = newTree;
-            watchDir(changePath, root, subPath, newTree, cb);
+            files[name] = newTree;
+            await watchDir(changePath, dirPath, subPath, newTree, watchers);
         } else if (stats.isFile()) {
             changePath(subPath, "cf");
-            subTree[name] = name;
-            cb && cb();
+            files[name] = stats.ctime.toISOString() + "|" + stats.size;
         } else {
-            removeTree(changePath, subPath, subTree, name);
-            cb && cb();
+            throw new Error('Is not a file nor directory');
         }
-    })
-}
+    } catch (e) {
+        removeTree(changePath, subPath, files, name);
+    }
+};
 
-function watchDir(changePath, root, path, subTree, cb) {
-    const {nextCycle,checkFinish} = runAfterAllCycles(() => {
-        const watcher = fs.watch(root + path, (eventType, name) => fsStat(changePath, root, path, subTree, name));
-        subTree['.'] = () => watcher.close();
-        cb && cb();
+const watchDir = async (changePath, dirPath, path = '', files, watchers) => {
+    const items = await new Promise((resolve, reject) => {
+        fs.readdir(dirPath + path, (err, items) => err ? reject(err) : resolve(items));
     });
-    fs.readdir(root + path, (err, files) => {
-        files.map(name => nextCycle(endCycle => fsStat(changePath, root, path, subTree, name, endCycle)));
-        checkFinish();
-    });
-}
+    await Promise.all(items.map(name => fsStat(changePath, dirPath, path, files, name, watchers)));
+    const watcher = fs.watch(dirPath + path, (eventType, name) =>
+        fsStat(changePath, dirPath, path, files, name, watchers)
+    );
+    watchers.push(watcher);
+    files['.'] = () => {
+        const i = watchers.indexOf(watcher);
+        if (i >= 0) {
+            watchers.splice(i, 1);
+            watcher.close();
+        }
+    };
+    files['/'] = () => {
+        [...watchers].map(watcher => {
+            const i = watchers.indexOf(watcher);
+            if (i >= 0) {
+                watchers.splice(i, 1);
+                watcher.close();
+            }
+        });
+    }
+};
 
 const type = {
     'cf': 0,
@@ -61,12 +75,12 @@ const type = {
     'rd': 3
 };
 
-function forChangeListener(listener) {
+const forChangeListener = listener => {
     let changes = null;
     let changing = null;
 
     function done() {
-        const arrays = [[],[],[],[]];
+        const arrays = [[], [], [], []];
         for (const name in changes) {
             arrays[type[changes[name]]].push(name);
         }
@@ -88,8 +102,58 @@ function forChangeListener(listener) {
         changing = setTimeout(done, 200);
         changes[path] = type;
     }
-    
-}
 
-module.exports.watchDir = watchDir;
-module.exports.forChangeListener = forChangeListener;
+};
+
+const watchDirAt = async (dirPath, changeListener) => {
+    const files = {};
+    const watchers = [];
+    await watchDir(forChangeListener(changeListener), dirPath, '', files, watchers);
+    return files;
+};
+
+const fixPath = filePath => {
+    if (filePath.startsWith("../") || filePath.includes('/../') || filePath.includes('//')) {
+        throw new Error(`File path '${filePath}' should not include '..' nor '//'`);
+    }
+    return !filePath.startsWith('/') ? '/' + filePath : filePath;
+};
+
+const filePathReader = dirPath => async filePath => {
+    fixPath(filePath);
+    if (!filePath.startsWith('/')) filePath = '/' + filePath;
+    return await new Promise((resolve, reject) =>
+        fs.readFile(dirPath + filePath, (e, data) => e ? reject(e) : resolve(data))
+    )
+};
+
+const mkdir = async (dirPath, parent) => {
+    const index = parent.lastIndexOf('/');
+    if (index > 0) {
+        await mkdir(dirPath, parent.substr(0, index));
+    }
+    const stat = await new Promise(resolve =>
+        fs.stat(dirPath + parent, (err, stat) => err ? resolve(null) : resolve(stat))
+    );
+    if (!stat || !stat.isDirectory()) {
+        await new Promise((resolve, reject) =>
+            fs.mkdir(dirPath + parent, {recursive: true}, e => e ? reject(e) : resolve())
+        );
+    }
+};
+
+const filePathWriter = dirPath => async (filePath, data, options) => {
+    filePath = fixPath(filePath);
+    if (!data) {
+        await new Promise((resolve, reject) =>
+            fs.unlink(dirPath + filePath, e => e ? reject(e) : resolve())
+        );
+        return
+    }
+    await mkdir(dirPath, filePath.substr(0, filePath.lastIndexOf('/')));
+    await new Promise((resolve, reject) =>
+        fs.writeFile(dirPath + filePath, data, options, e => e ? reject(e) : resolve())
+    );
+};
+
+module.exports = {watchDirAt, filePathReader, filePathWriter};

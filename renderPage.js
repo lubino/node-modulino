@@ -1,11 +1,35 @@
-const {getEjs} = require('./installer');
+const {runJS} = require('./runModule');
+const {asyncRequire} = require('./installer');
 
-
-const ejsOptions = {compileDebug: false, rmWhitespace: true};
-
-const renderEjs = async (file, features, req, res, logger) => {
-    const ejs = await getEjs(logger);
-    return ejs.render(file, {...features, req, res, console: logger}, ejsOptions);
+const options = {
+    ejs: {compileDebug: false, rmWhitespace: true}
 };
 
-module.exports = {renderEjs};
+const compilePage = async (type, filePath, file, api, logger) => {
+    switch (type) {
+        case 'pug':
+            const pug = await asyncRequire(logger, type);
+            const js = pug.compileClient(file, {filename: filePath})+"; window.template = template;";
+            runJS(filePath, api, js);
+            return api.window.template;
+    }
+};
+
+const renderPage = async (type, filePath, compiledPage, file, features, req, res, logger) => {
+    if (compiledPage) {
+        return compiledPage({...features, req, res, console: logger});
+    }
+
+    const item = await asyncRequire(logger, type);
+    switch (type) {
+        case 'ejs':
+            return item.render(file, {...features, req, res, console: logger}, options.ejs);
+        case 'pug':
+            return item.render(file, {...features, req, res, console: logger});
+        default:
+            logger.error(`unknown page type '${type}'`);
+            return `no page renderer for ${type} files`;
+    }
+};
+
+module.exports = {compilePage, renderPage};

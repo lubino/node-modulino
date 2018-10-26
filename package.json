@@ -1,18 +1,18 @@
 {
   "name": "modulino",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Simple NodeJS Application Server",
   "main": "modulino.js",
-  "scripts": {
-  },
+  "scripts": {},
   "author": "Lubos Strapko",
-  "license": "MIT License",
-  "peerDependencies": {
-  },
-  "devDependencies": {
-  },
+  "license": "MIT",
+  "peerDependencies": {},
+  "devDependencies": {},
   "dependencies": {
-    "nodemailer": "^4.6.8"
+    "ejs": "^2.6.1",
+    "eslint": "^5.7.0",
+    "pug": "^2.0.3",
+    "server-static": "^2.0.5"
   },
   "repository": {
     "type": "git",
@@ -23,10 +23,30 @@
     "AS",
     "server",
     "servlets",
-    "express"
+    "express",
+    "EJS"
   ],
   "bugs": {
     "url": "https://github.com/lubino/node-modulino/issues"
   },
-  "homepage": "https://github.com/lubino/node-modulino#readme"
+  "homepage": "https://github.com/lubino/node-modulino#readme",
+  "files": [
+    "administration.js",
+    "cli.js",
+    "client.js",
+    "context.js",
+    "eslint.js",
+    "express.js",
+    "features.js",
+    "fsWatcher.js",
+    "installer.js",
+    "logger.js",
+    "module.js",
+    "moduleFactory.js",
+    "modulino.js",
+    "renderPage.js",
+    "runModule.js",
+    "users.js",
+    "webHandlers.js"
+  ]
 }

@@ -1,45 +1,14 @@
-function log(...a) {
-    console.log(...a);
-}
+const {validate} = require('./eslint');
+const runJS = (require, window, console, Error, validate, js) => eval(js);
 
-function req(api, path) {
-    if (path === 'api') return api;
-    log('require ' + path);
-    return require(path)
-}
 
-function runModule(dirPath, filePath, api, file) {
-    const _logs = [];
-    const console = {
-        log: (...a) => _logs.push(a)
-    };
-    const window = {};
-    const require = path => req(api, path);
+module.exports.runJS = (filePath, api, js) => {
+    const {require, window, console, Error} = api;
     try {
-        eval(file);
+        const errors = validate(console, js, filePath);
+        runJS(require, window, console, Error, undefined, js);
+        return errors;
     } catch (e) {
-        const {message} = e;
-        const stackArr = [];
-        ("" + e.stack).split('\n').map((line, index) => {
-            if (index === 0) {
-                stackArr.push(line);
-                return;
-            }
-            const start = line.indexOf('(eval at runModule');
-            if (start > 0) {
-                const startStr = line.substr(0, start) + "(";
-                const endConst = "), <anonymous>";
-                const end = line.indexOf(endConst);
-                if (end > 0) {
-                    const endStr = line.substr(end + endConst.length);
-                    stackArr.push(startStr + dirPath + filePath + endStr);
-                }
-            }
-        });
-        const stack = stackArr.join('\n');
-        throw {message, stack, toString: () => message, logs: _logs};
+        throw console.transformException(e);
     }
-    return _logs;
-}
-
-module.exports = {runModule};
+};

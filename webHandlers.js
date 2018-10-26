@@ -10,3 +10,6 @@ const infoHandler = (file, data) => (req, res) => {
     res.type(`html`);
     res.send(`<h1>${file}</h1>${data(file)}`)
 };
+
+
+module.exports = {infoHandler, errHandler, loggerHTML};
