@@ -136,7 +136,7 @@ connect({url, privateKey, username, email});
 
 Run this commands to be able to remotely
 ``` sh
-npm install modulino
+npm install modulino ws
 
 node client.js
 ```
