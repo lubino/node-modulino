@@ -94,12 +94,12 @@ Open the [main](http://localhost:8000/) page.
 
 ### Develop remotely
 Create file **client.js** in any empty directory
-``` javascript
+``` javascript 1.7
 #!/usr/bin/env node
 
 const {connect} = require("modulino");
 
-const url = "ws://localhost:8000/administrationApi';
+const url = "ws://localhost:8000/administrationApi";
 
 const username = "test";
 const email = "test@test.com";
@@ -150,7 +150,7 @@ ssh-keygen -f ~/.ssh/id_rsa -e -m pem
 ``` 
 
 Generating your own keys using NodeJS (newest version required):
-``` javascript
+``` javascript 1.7
 const { generateKeyPair } = require('crypto');
 
 generateKeyPair('rsa', {
@@ -172,7 +172,7 @@ generateKeyPair('rsa', {
             'const {connect} = require("modulino");\n\n' +
             'const username = "test";\n' +
             'const email = "test@test.com";\n' +
-            'const url = "ws://localhost:8000/administrationApi\';\n' +
+            'const url = "ws://localhost:8000/administrationApi";\n' +
             'const privateKey = "'+privateKey.split('\n').join('\\n"+\n  "')+'";\n\n'+
             'connect({url, privateKey, username, email});'
         );
