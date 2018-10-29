@@ -8,6 +8,10 @@ const methods = {
         if (!token === session.authenticated) return;
         const publicKeys = publicKeysByEmail(username, email);
         if (publicKeys) {
+            if (token) {
+                session = sessions[token];
+                if (!session || session.at + session.timeout < Date.now()) throw new Error('401');
+            }
             const publicKey = publicKeys.find(publicKey => {
                 try {
                     const decrypted = crypto.publicDecrypt(publicKey, Buffer.from(signature, 'base64')).toString();
@@ -20,6 +24,9 @@ const methods = {
                 const user = logUser(username, email, true);
                 if (!user) throw new Error('401');
                 session.authenticated = true;
+                if (token) {
+                    session.send("USR", {user});
+                }
                 return {USR: {user}};
             } else {
                 logUser(username, email, false);
@@ -90,16 +97,26 @@ const onMessage = (session, methodName, obj) => {
 };
 
 let count = 1;
-const createSession = () => {
+const sessions = {};
+const createSession = ({timeout}) => {
     const id = (Math.random() * 1000000000000000000).toString(16) + (count++).toString(16);
-    return {
+    const at = Date.now();
+    const session = {
+        at,
         id,
+        timeout,
         authenticated: false
-    }
+    };
+    sessions[session.id] = session;
+    return session;
 };
 
 const sessionStarted = session => {
     session.send("AUTH", {token: session.id});
 };
 
-module.exports = {createSession, sessionStarted, onMessage};
+const destroySession = session => {
+    delete sessions[session.id];
+};
+
+module.exports = {createSession, destroySession, sessionStarted, onMessage};

@@ -4,7 +4,7 @@ const {contextForPath} = require('./context');
 const {watchDirAt, filePathReader, filePathWriter} = require('./fsWatcher');
 const {createLogger} = require("./logger");
 const {createModule} = require("./moduleFactory");
-const {createSession, sessionStarted, onMessage} = require("./administration");
+const {createSession, destroySession, sessionStarted, onMessage} = require("./administration");
 const {setListener, rootLogger, logToConsole} = require("./logger");
 
 let serveStatic;
@@ -196,9 +196,9 @@ const extendExpressApp = async (app, options) => {
 
     const extendedExpress = {};
     let usingAdmin = false;
-    extendedExpress.useAdministrationApi = (path) => {
+    extendedExpress.useAdministrationApi = path => {
         if (!usingAdmin) {
-            administrationExpressApp(app, path);
+            administrationExpressApp(app, path, options);
             usingAdmin = true;
         }
         return extendedExpress;
@@ -219,10 +219,11 @@ const extendExpressApp = async (app, options) => {
 };
 
 const fileListeners = [];
-const administrationExpressApp = (app, path = '/administrationApi') => {
+const administrationExpressApp = (app, path = '/administrationApi', options) => {
     const listeners = [];
+    const {timeout = 600000} = options;
     app.ws && app.ws(path, (ws, req) => {
-        const session = createSession();
+        const session = createSession({timeout});
         const {id} = session;
         session.send = (name, data) => ws.send(name + "\n" + JSON.stringify(data));
         const listener = data => session.authenticated && session.send("log", data);
@@ -245,6 +246,7 @@ const administrationExpressApp = (app, path = '/administrationApi') => {
             onMessage(session, methodName, obj);
         });
         ws.on('close', ()=>{
+            destroySession(session);
             listeners.splice(listeners.indexOf(listener), 1);
             if (listeners.length === 0) {
                 setListener(null)
@@ -258,4 +260,4 @@ const administrationExpressApp = (app, path = '/administrationApi') => {
 
 };
 
-module.exports = {extendExpressApp, administrationExpressApp, registerContext};
+module.exports = {extendExpressApp, registerContext};

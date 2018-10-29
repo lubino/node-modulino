@@ -107,12 +107,12 @@ function featuresForContext(context) {
             require: path => {
                 logger.debug(`loading module '${path}'`);
                 if (path === 'api') return api;
+                if (path === 'fs') throw new api.Error(`'${path}' is forbidden (security concerns)`);
+                if (path.startsWith('../') || path.includes('/../')) throw new api.Error(`path contains '../' use only absolute paths`);
+                if (path.startsWith('./')) path = context.path + path.substr(1);
+                else if (path.startsWith('/')) path = context.path + path;
+                else if (path.includes('/')) new api.Error(`path contains forbidden symbol '/' (security concerns)`);
                 try {
-                    if (path === 'fs') new Error(`'${path}' is forbidden (security concerns)`);
-                    if (path.startsWith('../') || path.contains('/../')) new Error(`path contains '../' use only absolute paths`);
-                    if (path.startsWith('./')) path = context.path + path.substr(1);
-                    else if (path.startsWith('/')) path = context.path + path;
-                    else if (path.includes('/')) new Error(`path contains forbidden symbol '/' (security concerns)`);
                     return require(path)
                 } catch (e) {
                     throw logger.transformException(e);

@@ -50,6 +50,7 @@ forExpress(app, {
     contexts: [
         {path: 'web', headers: {host: `localhost:${port}`}}
     ],
+    administrationApi: '/administrationApi',
 }).then(() => app.listen(port, () =>
     console.log(`server started on port http://localhost:${port}`)
 ));
