@@ -156,4 +156,6 @@ const filePathWriter = dirPath => async (filePath, data, options) => {
     );
 };
 
-module.exports = {watchDirAt, filePathReader, filePathWriter};
+const readFile = async name => await new Promise(resolve => fs.readFile(name.replace('~/', __dirname+"/"), (err, data) => resolve(data)));
+
+module.exports = {watchDirAt, filePathReader, filePathWriter, readFile};

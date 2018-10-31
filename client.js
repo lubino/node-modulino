@@ -4,10 +4,9 @@ let fs;
 let os;
 const {watchDirAt} = require('./fsWatcher');
 
-
 const createMethods = session => ({
     ERR: err => {
-        console.log("Error received", err);
+        console.log("error received", err);
         err === 401 && session.close();
     },
     log: item => {
@@ -26,6 +25,9 @@ const createMethods = session => ({
             session.ignoredFilesByWatcher[path] = true;
             await rmFile(path);
         }));
+    },
+    USR: ({user}) => {
+        console.log(`user '${user.name}' authenticated`);
     },
     fileNotStored: async ({contextId, filePath, message}) => {
         console.log(`error storing file on server '${contextId}${filePath}': ${message}`)
@@ -52,12 +54,12 @@ function same(a, b) {
     return a === b;
 }
 
-function startWS(url, session) {
+function startWS(url, session, protocols, options, onMessage) {
     let ws;
     try {
         let isError = false;
-        console.log(`Opening ws '${url}'`);
-        ws = new WebSocket(url);
+        console.log(`opening ws '${url}'`);
+        ws = new WebSocket(url, protocols, options);
         ws.on('error', e => {
             isError = true;
             console.log(`ws error: ${e.message}`);
@@ -87,7 +89,7 @@ function startWS(url, session) {
             !session.closed && ws.send(name + (data ? "\n" + JSON.stringify(data) : ""));
             resetPing();
         } catch (e) {
-            console.log(`Can not send message ${name}=${data}: `, e);
+            console.log(`can not send message ${name}=${data}: `, e);
         }
         resolve()
     });
@@ -136,6 +138,7 @@ function startWS(url, session) {
         } catch (e) {
             // save to ignore
         }
+        onMessage && onMessage(methodName, obj);
         const items = promises[methodName];
         if (items) {
             const item = items.find(({data}) => !data || !Object.keys(data).find(key => !same(data[key], obj[key])));
@@ -144,7 +147,7 @@ function startWS(url, session) {
                 try {
                     item.resolve(obj);
                 } catch (e) {
-                    console.log(`Can not process message ${methodName}: ${JSON.stringify(obj)}`, e);
+                    console.log(`can not process message ${methodName}: ${JSON.stringify(obj)}`, e);
                 }
                 return
             }
@@ -154,7 +157,7 @@ function startWS(url, session) {
             const response = await method(obj);
             if (response) sendAll(response);
         } else {
-            console.log("unknown format: " + data);
+            console.log(`unknown message '${methodName}':`, obj);
         }
         //ws.send("ok");
     });
@@ -167,19 +170,20 @@ const comm = async (session, message) => {
     const {token} = await message('AUTH');
     session.id = token;
 
-    await authorize(session, message);
+    await authorize(session);
+    session.user = await message('USR');
+    session.authorize = token => authorize(session, token);
 
     await syncDirs(session, message);
 
 };
 
-const authorize = async (session, message) => {
-    const {id} = session;
-    const {privateKey, username, email, token} = session.auth;
-    const signature = crypto.privateEncrypt(privateKey, Buffer.from(id)).toString("base64");
-    console.log(`authenticating session '${id}'`);
+const authorize = async (session, token) => {
+    const {id, auth: {privateKey, username, email}} = session;
+    const enc = token || id;
+    const signature = crypto.privateEncrypt(privateKey, Buffer.from(enc)).toString("base64");
+    console.log(`authenticating session '${enc}'`);
     session.send('AUTH', {email, username, signature, token});
-    session.user = await message('USR');
 };
 
 const syncDirs = async (session, message) => {
@@ -207,7 +211,7 @@ const syncDirs = async (session, message) => {
         }
     };
 
-    session.send('getContexts', {});
+    session.send('contexts', {});
     const contexts = await message('contexts');
 
     const ids = [];
@@ -360,7 +364,7 @@ const fileStat = (path) => new Promise(resolve =>
     fs.stat(path, (err, stat) => err ? resolve(null) : resolve(stat))
 );
 
-module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token}) => {
+module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token, protocols, options, onMessage}) => {
     if (!crypto) {
         crypto = require("crypto");
         WebSocket = require('ws');
@@ -394,5 +398,6 @@ module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, em
     const session = {
         auth: {privateKey, email, token, username}
     };
-    startWS(url, session);
+    startWS(url, session, protocols, options, onMessage);
+    return session;
 };

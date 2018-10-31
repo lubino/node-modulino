@@ -20,10 +20,14 @@ const getUser = (username, email) => {
     return user;
 };
 
+const getUsers = () => Object.keys(users);
+
 const userShhKeys = (username, email) => {
     const user = getUser(username, email);
     return user ? user.sshKeys : [];
 };
+
+const user = ({username, email}) => cloneUser(getUser(username, email));
 
 const publicKeysByEmail = (username, email) => userShhKeys(username, email).map(({publicKey})=> publicKey);
 
@@ -79,4 +83,4 @@ const addUser = (user) => {
     return cloneUser(result);
 };
 
-module.exports = {addUser, publicKeysByEmail, logUser};
+module.exports = {getUsers, user, addUser, publicKeysByEmail, logUser};

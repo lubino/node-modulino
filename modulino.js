@@ -1,4 +1,5 @@
-const {extendExpressApp, registerContext} = require('./express');
+const {registerContext} = require('./context');
+const {extendExpressApp} = require('./express');
 const {addUser} = require('./users');
 const {logToConsole} = require('./logger');
 const {connect} = require('./client');
