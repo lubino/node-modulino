@@ -39,9 +39,9 @@ const administrationExpressApp = (app, path = '/administrationApi', options) => 
                 if (data === 'ping') return;
                 const newLine = data.indexOf("\n");
                 const methodName = newLine !== -1 ? newLine > 0 ? data.substr(0, newLine) : null : newLine;
-                let obj = data.substr(newLine + 1);
+                let obj = newLine !== -1 ? data.substr(newLine + 1) : undefined;
                 try {
-                    obj = methodName ? JSON.parse(obj) : null;
+                    obj = obj ? JSON.parse(obj) : undefined;
                 } catch (e) {
                     //safe to ignore
                 }
@@ -57,7 +57,7 @@ const administrationExpressApp = (app, path = '/administrationApi', options) => 
                 removeFileListener(fileListener);
                 rootLogger.log(`administration socked '${id}' closed`);
             });
-            rootLogger.log(`new administration socked '${id}' ${JSON.stringify(query)}`);
+            rootLogger.log(`new administration socked ${JSON.stringify({id, query})}`);
             sessionStarted(session);
         });
     }

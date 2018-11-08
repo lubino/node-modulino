@@ -92,7 +92,7 @@ const methods = {
                 if (token) {
                     session.send("USR", user);
                 }
-                return {USR: {user}};
+                return {USR: user};
             } else {
                 logUser(username, email, false);
             }

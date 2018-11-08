@@ -2,7 +2,8 @@ let crypto;
 let WebSocket;
 let fs;
 let os;
-const {watchDirAt} = require('./fsWatcher');
+let EventEmitter;
+const {watchDirAt, readFile} = require('./fsWatcher');
 
 const createMethods = session => ({
     ERR: err => {
@@ -54,14 +55,16 @@ function same(a, b) {
     return a === b;
 }
 
-function startWS(url, session, protocols, options, onMessage) {
+function startWS(url, session, protocols, options, syncContexts) {
     let ws;
     try {
         let isError = false;
         console.log(`opening ws '${url}'`);
+        session.emit('open', url, protocols, options);
         ws = new WebSocket(url, protocols, options);
         ws.on('error', e => {
             isError = true;
+            session.emit('error', e);
             console.log(`ws error: ${e.message}`);
         });
     } catch (e) {
@@ -81,18 +84,19 @@ function startWS(url, session, protocols, options, onMessage) {
         if (session.connected) ws.close();
         Object.values(promises).map(items => items.map(({reject}) => reject("Closing ws")));
         session.contexts && session.contexts.map(context => {
-            context.files['/']();
+            context.files && context.files['/']();
         });
+        session.emit('close');
     };
-    session.send = (name, data) => new Promise((resolve, reject) => {
+    session.send = (name, data) => {
         try {
-            !session.closed && ws.send(name + (data ? "\n" + JSON.stringify(data) : ""));
+            session.emit('send', name, data);
+            !session.closed && ws.send(name + (data !== undefined ? "\n" + JSON.stringify(data) : ""));
             resetPing();
         } catch (e) {
             console.log(`can not send message ${name}=${data}: `, e);
         }
-        resolve()
-    });
+    };
 
     const sendAll = obj => {
         if (typeof obj === 'object') {
@@ -117,6 +121,7 @@ function startWS(url, session, protocols, options, onMessage) {
 
     ws.on('open', () => {
         session.connected = true;
+        session.emit('open');
         resetPing();
         onConnected();
     });
@@ -138,7 +143,7 @@ function startWS(url, session, protocols, options, onMessage) {
         } catch (e) {
             // save to ignore
         }
-        onMessage && onMessage(methodName, obj);
+        session.emit('message', methodName, obj);
         const items = promises[methodName];
         if (items) {
             const item = items.find(({data}) => !data || !Object.keys(data).find(key => !same(data[key], obj[key])));
@@ -156,25 +161,28 @@ function startWS(url, session, protocols, options, onMessage) {
         if (method) {
             const response = await method(obj);
             if (response) sendAll(response);
-        } else {
-            console.log(`unknown message '${methodName}':`, obj);
         }
-        //ws.send("ok");
     });
 
-    comm(session, message).catch(e => console.error(e));
+    comm(session, message, syncContexts).catch(e => console.error(e));
 }
 
-const comm = async (session, message) => {
+const comm = async (session, message, syncContexts) => {
 
     const {token} = await message('AUTH');
     session.id = token;
 
     await authorize(session);
     session.user = await message('USR');
+    session.emit('authorized', session.user);
     session.authorize = token => authorize(session, token);
 
-    await syncDirs(session, message);
+    if (syncContexts) {
+        session.emit('sync');
+        await syncDirs(session, message);
+        session.emit('synced');
+    }
+    session.emit('ready');
 
 };
 
@@ -195,10 +203,12 @@ const syncDirs = async (session, message) => {
     };
     session.uploadFile = async (id, filePath) => {
         const data = await readFile(id + filePath);
-        const base64 = data.toString('base64');
-        session.send("setFileContext", {contextId: id, filePath, base64});
-        await message("change", {id, newFiles: [filePath], removedFiles: []});
-        console.log(`file '${id}${filePath}' uploaded`);
+        if (data) {
+            const base64 = data.toString('base64');
+            session.send("setFileContext", {contextId: id, filePath, base64});
+            await message("change", {id, newFiles: [filePath], removedFiles: []});
+            console.log(`file '${id}${filePath}' uploaded`);
+        }
     };
 
     session.downloadFile = async (contextId, filePath) => {
@@ -225,45 +235,43 @@ const syncDirs = async (session, message) => {
     }));
 
     session.send('filesInContext', ids);
+    const contextsFiles = await message('filesInContext');
     const ignoredFilesByWatcher = {};
     session.ignoredFilesByWatcher = ignoredFilesByWatcher;
 
     await Promise.all(session.contexts.map(async context => {
         const {id, existing} = context;
-        const contextFiles = await message('filesInContext');
+        const {files} = contextsFiles.find(item => id === item.id);
         const downloadFiles = [];
-        await Promise.all(contextFiles.map(async ({id, files}) => {
-            const addTree = async (prefix, o) => {
-                const full = id + prefix;
-                const inDir = full.substr(0, full.length - 1);
-                if (!existing[inDir]) {
-                    await mkdir(inDir)
-                } else {
-                    delete existing[inDir];
-                }
-                await Promise.all(Object.entries(o).map(async ([name, value]) => {
-                    const filePath = prefix + name;
-                    if (typeof value === 'object') await addTree(filePath + '/', value);
-                    else {
-                        const key = id + prefix + name;
-                        ignoredFilesByWatcher[key] = true;
-                        const [modified, size] = value.split("|");
-                        if (existing[key]) {
-                            const stat = await fileStat(key);
-                            delete existing[key];
-                            if (!stat || stat.ctime.getTime() < new Date(modified).getTime()) {
-                                downloadFiles.push({id, filePath});
-                            }
-                        } else {
+        const addTree = async (prefix, o) => {
+            const full = id + prefix;
+            const inDir = full.substr(0, full.length - 1);
+            if (!existing[inDir]) {
+                await mkdir(inDir)
+            } else {
+                delete existing[inDir];
+            }
+            await Promise.all(Object.entries(o).map(async ([name, value]) => {
+                const filePath = prefix + name;
+                if (typeof value === 'object') await addTree(filePath + '/', value);
+                else {
+                    const key = id + prefix + name;
+                    ignoredFilesByWatcher[key] = true;
+                    const [modified, size] = value.split("|");
+                    if (existing[key]) {
+                        const stat = await fileStat(key);
+                        delete existing[key];
+                        if (!stat || stat.ctime.getTime() < new Date(modified).getTime()) {
                             downloadFiles.push({id, filePath});
                         }
+                    } else {
+                        downloadFiles.push({id, filePath});
                     }
-                }));
-            };
+                }
+            }));
+        };
 
-            await addTree('/', files);
-
-        }));
+        await addTree('/', files);
 
         await Promise.all(downloadFiles.map(async ({id, filePath}) => await session.downloadFile(id, filePath)));
         const filesToRemove = [];
@@ -322,9 +330,11 @@ const deleteFolderRecursive = async (path, collect) => {
         await Promise.all(files.map(async file => {
             const curPath = path + "/" + file;
             const stats = await new Promise(resolve => fs.lstat(curPath, (err, stats) => resolve(stats)));
-            if (stats && stats.isDirectory()) { // recurse
+            if (stats && stats.isDirectory()) {
+                // recurse
                 await deleteFolderRecursive(curPath, collect);
-            } else if (!collect) { // delete file
+            } else if (!collect) {
+                // delete file
                 await rmFile(curPath);
             } else {
                 collect(false, curPath);
@@ -349,10 +359,6 @@ const mkdir = async (path) => {
         await new Promise(resolve => fs.mkdir(path, {recursive: true}, () => resolve()));
     }
 };
-const readFile = (path) => new Promise((resolve, reject) => {
-    console.log("reading file " + path);
-    fs.readFile(path, (err, data) => err ? reject(err) : resolve(data));
-});
 const writeFile = async (path, content) => {
     await mkdir(path.substr(0, path.lastIndexOf('/')));
     await new Promise((resolve, reject) =>
@@ -364,7 +370,7 @@ const fileStat = (path) => new Promise(resolve =>
     fs.stat(path, (err, stat) => err ? resolve(null) : resolve(stat))
 );
 
-module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token, protocols, options, onMessage}) => {
+module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token, protocols, options, emitter, syncContexts = true}) => {
     if (!crypto) {
         crypto = require("crypto");
         WebSocket = require('ws');
@@ -395,9 +401,15 @@ module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, em
         }
     }
 
+    if (!emitter) {
+        if (!EventEmitter) EventEmitter = require('events');
+        emitter = new EventEmitter();
+    }
     const session = {
-        auth: {privateKey, email, token, username}
+        auth: {privateKey, email, token, username},
+        on: (type, listener) => emitter.on(type, listener),
+        emit: (type, ...args) => emitter.emit(type, ...args),
     };
-    startWS(url, session, protocols, options, onMessage);
+    startWS(url, session, protocols, options, syncContexts);
     return session;
 };
