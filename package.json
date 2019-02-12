@@ -1,6 +1,6 @@
 {
   "name": "modulino",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Simple NodeJS Application Server",
   "main": "modulino.js",
   "scripts": {},
