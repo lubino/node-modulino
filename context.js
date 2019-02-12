@@ -68,9 +68,11 @@ function getFileType(file) {
         }
     } else {
         const [ext, name] = pageTypes.find(([ext]) => path.endsWith(ext)) || [];
+        const withoutExtension = path.substr(0, path.length - ext.length);
+        paths.push(withoutExtension);
         if (name) {
             pageType = name;
-            path = path.substr(0, path.length - ext.length) + ".html"
+            path = `${withoutExtension}.html`
         }
     }
     paths.push(path);

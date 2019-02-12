@@ -65,7 +65,7 @@ const methods = {
             }
         }
     },
-    exit: (session, code) => {
+    exit: (session, {code} = {}) => {
         process.exit(code || 0);
     },
     AUTH: (session, {username, email, signature, token}) => {
@@ -142,8 +142,8 @@ const processMessage = async (session, method, obj) => {
         throw new Error('401');
     }
     const response = await method(session, obj);
-    if (response) {
-        typeof response === 'object' && Object.entries(response).map(([name, data]) =>
+    if (response && typeof response === 'object') {
+         Object.entries(response).map(([name, data]) =>
             session.send(name, data)
         );
     }
