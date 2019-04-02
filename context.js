@@ -58,7 +58,6 @@ function getFileType(file) {
     let path = file;
     const paths = [];
     if (path.endsWith('mod.js')) {
-        //paths.push(path);
         const lastModuleCharIndex = path.length - 7;
         const lastChar = path.charAt(lastModuleCharIndex);
         const rootModule = lastChar === '/';
@@ -68,11 +67,14 @@ function getFileType(file) {
         }
     } else {
         const [ext, name] = pageTypes.find(([ext]) => path.endsWith(ext)) || [];
-        const withoutExtension = path.substr(0, path.length - ext.length);
-        paths.push(withoutExtension);
         if (name) {
+            const withoutExtension = path.substr(0, path.length - ext.length);
+            paths.push(withoutExtension);
             pageType = name;
             path = `${withoutExtension}.html`
+        } else if (path.endsWith('.html')) {
+            const withoutExtension = path.substr(0, path.length - 5);
+            paths.push(withoutExtension);
         }
     }
     paths.push(path);

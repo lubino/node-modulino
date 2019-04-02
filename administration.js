@@ -25,7 +25,7 @@ const methods = {
         }
         if (session && destroySession(session)) {
             return {sessionRemoved: id};
-        };
+        }
     },
     pty: async (session, {start, cols, rows, resize, msg}) => {
         if (start) {
@@ -50,7 +50,7 @@ const methods = {
                     // The WebSocket is not open, ignore
                 }
             });
-            const pid = term.pid;
+            const {pid} = term;
 
             session.term = term;
 

@@ -1,3 +1,6 @@
+const {validateUser} = require("./jsonSchema");
+const {rootLogger} = require('./logger');
+
 let indexer = 1;
 
 const users = {};
@@ -21,10 +24,11 @@ const getUser = (username, email) => {
 };
 
 const getUsers = () => Object.keys(users);
+const saveUser = user => (user.username);
 
 const userShhKeys = (username, email) => {
     const user = getUser(username, email);
-    return user ? user.sshKeys : [];
+    return (user && user.sshKeys) || [];
 };
 
 const user = ({username, email}) => cloneUser(getUser(username, email));
@@ -35,6 +39,7 @@ const logUser = (username, email, authenticated) => {
     const user = getUser(username, email);
     if (!user) return null;
     user.logs.push({at: Date.now(), type:  authenticated ? "authenticated" : "rejected"});
+    saveUser(user);
     return authenticated ? cloneUser(user) : null;
 };
 
@@ -60,6 +65,14 @@ const cloneUser = user => {
 };
 
 const addUser = (user) => {
+    const errors = validateUser(user);
+    if (errors.length) {
+        const message = `can not add user: ${errors.map(e => e.message)}`;
+        rootLogger.error(message, user);
+        const error = new Error(message);
+        error.errors = errors;
+        throw error;
+    }
     let {name, username, email, emails, sshKeys} = user;
 
     if (!str(username) || users[username]) do {
@@ -79,6 +92,7 @@ const addUser = (user) => {
     const logs = [];
     const result = {name, username, emails, sshKeys,logs};
     users[username] = result;
+    saveUser(result);
     emails.map(email => usernameByEmail[email] = username);
     return cloneUser(result);
 };
