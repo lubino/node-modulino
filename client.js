@@ -12,7 +12,7 @@ const createMethods = session => ({
     },
     log: item => {
         console.log(item.message);
-        if (item.stack) console.log(item.stack);
+        if (session.logTargets && item.stack) console.log(item.stack);
     },
     change: async data => {
         const {id, newFiles, removedFiles} = data;
@@ -370,7 +370,7 @@ const fileStat = (path) => new Promise(resolve =>
     fs.stat(path, (err, stat) => err ? resolve(null) : resolve(stat))
 );
 
-module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token, protocols, options, emitter, syncContexts = true}) => {
+module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token, protocols, options, emitter, syncContexts = true, logTargets = true}) => {
     if (!crypto) {
         crypto = require("crypto");
         WebSocket = require('ws');
@@ -406,6 +406,7 @@ module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, em
         emitter = new EventEmitter();
     }
     const session = {
+        logTargets,
         auth: {privateKey, email, token, username},
         on: (type, listener) => emitter.on(type, listener),
         emit: (type, ...args) => emitter.emit(type, ...args),
