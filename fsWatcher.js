@@ -1,4 +1,6 @@
-const fs = require('fs');
+let fs;
+
+const getFS = () => fs ? fs : fs = require('fs');
 
 function removeTree(changePath, path, subTree, name) {
     const item = subTree[name];
@@ -23,7 +25,7 @@ const fsStat = async (changePath, dirPath, path, files, name, watchers) => {
     const subPath = path + "/" + name;
     try {
         const stats = await new Promise((resolve, reject) => {
-            fs.stat(dirPath + subPath, (err, stats) => err ? reject(err) : resolve(stats))
+            getFS().stat(dirPath + subPath, (err, stats) => err ? reject(err) : resolve(stats))
         });
         if (stats.isDirectory()) {
             changePath(subPath, "cd");
@@ -43,10 +45,10 @@ const fsStat = async (changePath, dirPath, path, files, name, watchers) => {
 
 const watchDir = async (changePath, dirPath, path = '', files, watchers) => {
     const items = await new Promise((resolve, reject) => {
-        fs.readdir(dirPath + path, (err, items) => err ? reject(err) : resolve(items));
+        getFS().readdir(dirPath + path, (err, items) => err ? reject(err) : resolve(items));
     });
     await Promise.all(items.map(name => fsStat(changePath, dirPath, path, files, name, watchers)));
-    const watcher = fs.watch(dirPath + path, (eventType, name) =>
+    const watcher = getFS().watch(dirPath + path, (eventType, name) =>
         fsStat(changePath, dirPath, path, files, name, watchers)
     );
     watchers.push(watcher);
@@ -123,7 +125,7 @@ const filePathReader = dirPath => async filePath => {
     fixPath(filePath);
     if (!filePath.startsWith('/')) filePath = '/' + filePath;
     return await new Promise((resolve, reject) =>
-        fs.readFile(dirPath + filePath, (e, data) => e ? reject(e) : resolve(data))
+        getFS().readFile(dirPath + filePath, (e, data) => e ? reject(e) : resolve(data))
     )
 };
 
@@ -133,11 +135,11 @@ const mkdir = async (dirPath, parent) => {
         await mkdir(dirPath, parent.substr(0, index));
     }
     const stat = await new Promise(resolve =>
-        fs.stat(dirPath + parent, (err, stat) => err ? resolve(null) : resolve(stat))
+        getFS().stat(dirPath + parent, (err, stat) => err ? resolve(null) : resolve(stat))
     );
     if (!stat || !stat.isDirectory()) {
         await new Promise((resolve, reject) =>
-            fs.mkdir(dirPath + parent, {recursive: true}, e => e ? reject(e) : resolve())
+            getFS().mkdir(dirPath + parent, {recursive: true}, e => e ? reject(e) : resolve())
         );
     }
 };
@@ -146,16 +148,18 @@ const filePathWriter = dirPath => async (filePath, data, options) => {
     filePath = fixPath(filePath);
     if (!data) {
         await new Promise((resolve, reject) =>
-            fs.unlink(dirPath + filePath, e => e ? reject(e) : resolve())
+            getFS().unlink(dirPath + filePath, e => e ? reject(e) : resolve())
         );
         return
     }
     await mkdir(dirPath, filePath.substr(0, filePath.lastIndexOf('/')));
-    await new Promise((resolve, reject) =>
-        fs.writeFile(dirPath + filePath, data, options, e => e ? reject(e) : resolve())
-    );
+    await saveFile(dirPath + filePath, data, options);
 };
 
-const readFile = async name => await new Promise(resolve => fs.readFile(name.replace('~/', __dirname+"/"), (err, data) => resolve(data)));
+const getFile = async name => await new Promise(resolve => getFS().readFile(name, (err, data) => resolve(data)));
+const readFile = async name => await getFile(name.replace('~/', __dirname+"/"));
+const saveFile = async (name, data, options) => await new Promise((resolve, reject) =>
+    getFS().writeFile(name, data, options, e => e ? reject(e) : resolve())
+);
 
-module.exports = {watchDirAt, filePathReader, filePathWriter, readFile};
+module.exports = {watchDirAt, filePathReader, filePathWriter, getFile, readFile, saveFile, getFS};

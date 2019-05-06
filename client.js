@@ -1,9 +1,9 @@
-let crypto;
-let WebSocket;
-let fs;
-let os;
-let EventEmitter;
-const {watchDirAt, readFile} = require('./fsWatcher');
+const {getSshKeyPath, userInfo, getPubEmail} = require("./security");
+const {getFS} = require("./fsWatcher");
+const {getCrypto} = require("./security");
+const {watchDirAt, getFile} = require('./fsWatcher');
+
+const isNodeJS = true;
 
 const createMethods = session => ({
     ERR: err => {
@@ -27,8 +27,11 @@ const createMethods = session => ({
             await rmFile(path);
         }));
     },
-    USR: ({user}) => {
+    USR: (user) => {
         console.log(`user '${user.name}' authenticated`);
+    },
+    newContext: ({id, files}) => {
+        console.log(`context '${id}' created, contains: ${Object.keys(files).join(', ')}`);
     },
     fileNotStored: async ({contextId, filePath, message}) => {
         console.log(`error storing file on server '${contextId}${filePath}': ${message}`)
@@ -55,12 +58,21 @@ function same(a, b) {
     return a === b;
 }
 
+let webSocket;
+const getWebSocket = () => {
+    if (!webSocket) {
+        webSocket = require('ws');
+    }
+    return webSocket
+};
+
 function startWS(url, session, protocols, options, syncContexts) {
     let ws;
     try {
         let isError = false;
         console.log(`opening ws '${url}'`);
         session.emit('open', url, protocols, options);
+        const WebSocket = getWebSocket();
         ws = new WebSocket(url, protocols, options);
         ws.on('error', e => {
             isError = true;
@@ -189,7 +201,7 @@ const comm = async (session, message, syncContexts) => {
 const authorize = async (session, token) => {
     const {id, auth: {privateKey, username, email}} = session;
     const enc = token || id;
-    const signature = crypto.privateEncrypt(privateKey, Buffer.from(enc)).toString("base64");
+    const signature = getCrypto().privateEncrypt(privateKey, Buffer.from(enc)).toString("base64");
     console.log(`authenticating session '${enc}'`);
     session.send('AUTH', {email, username, signature, token});
 };
@@ -243,6 +255,7 @@ const syncDirs = async (session, message) => {
         const {id, existing} = context;
         const {files} = contextsFiles.find(item => id === item.id);
         const downloadFiles = [];
+        const allFiles = [];
         const addTree = async (prefix, o) => {
             const full = id + prefix;
             const inDir = full.substr(0, full.length - 1);
@@ -253,6 +266,7 @@ const syncDirs = async (session, message) => {
             }
             await Promise.all(Object.entries(o).map(async ([name, value]) => {
                 const filePath = prefix + name;
+                allFiles.push(filePath);
                 if (typeof value === 'object') await addTree(filePath + '/', value);
                 else {
                     const key = id + prefix + name;
@@ -272,6 +286,7 @@ const syncDirs = async (session, message) => {
         };
 
         await addTree('/', files);
+        console.log(`received context '${id}': ${allFiles.join(', ')}`);
 
         await Promise.all(downloadFiles.map(async ({id, filePath}) => await session.downloadFile(id, filePath)));
         const filesToRemove = [];
@@ -316,20 +331,20 @@ const syncDirs = async (session, message) => {
 
 const rmFile = path => new Promise(resolve => {
     console.log("removing file " + path);
-    fs.unlink(path, resolve)
+    getFS().unlink(path, resolve)
 });
 const rmDir = path => new Promise(resolve => {
     console.log("removing directory " + path);
-    fs.rmdir(path, resolve)
+    getFS().rmdir(path, resolve)
 });
-const listDir = path => new Promise(resolve => fs.readdir(path, (err, files) => resolve(files || [])));
+const listDir = path => new Promise(resolve => getFS().readdir(path, (err, files) => resolve(files || [])));
 const deleteFolderRecursive = async (path, collect) => {
-    const exists = await new Promise(resolve => fs.exists(path, resolve));
+    const exists = await new Promise(resolve => getFS().exists(path, resolve));
     if (exists) {
         const files = await listDir(path);
         await Promise.all(files.map(async file => {
             const curPath = path + "/" + file;
-            const stats = await new Promise(resolve => fs.lstat(curPath, (err, stats) => resolve(stats)));
+            const stats = await new Promise(resolve => getFS().lstat(curPath, (err, stats) => resolve(stats)));
             if (stats && stats.isDirectory()) {
                 // recurse
                 await deleteFolderRecursive(curPath, collect);
@@ -356,53 +371,58 @@ const mkdir = async (path) => {
     const stat = await fileStat(path);
     if (!stat || !stat.isDirectory()) {
         console.log("creating directory " + path);
-        await new Promise(resolve => fs.mkdir(path, {recursive: true}, () => resolve()));
+        await new Promise(resolve => getFS().mkdir(path, {recursive: true}, () => resolve()));
     }
 };
 const writeFile = async (path, content) => {
     await mkdir(path.substr(0, path.lastIndexOf('/')));
     await new Promise((resolve, reject) =>
-        fs.writeFile(path, content, (err) => err ? reject(err) : resolve())
+        getFS().writeFile(path, content, (err) => err ? reject(err) : resolve())
     );
     console.log("created file " + path);
 };
 const fileStat = (path) => new Promise(resolve =>
-    fs.stat(path, (err, stat) => err ? resolve(null) : resolve(stat))
+    getFS().stat(path, (err, stat) => err ? resolve(null) : resolve(stat))
 );
 
-module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token, protocols, options, emitter, syncContexts = true, logTargets = true}) => {
-    if (!crypto) {
-        crypto = require("crypto");
-        WebSocket = require('ws');
-        fs = require("fs");
-        os = require('os');
+const doConnect = async ({session, url, sshKeyPath, sshKeyName, protocols, options, syncContexts}) => {
+    if (!session.auth.username) {
+        session.auth.username = userInfo().username;
     }
-    if (!username) {
-        username = os.userInfo().username;
+    const loadEmail = !session.auth.email || !session.auth.username;
+    if (!sshKeyPath && !session.auth.privateKey && loadEmail) {
+        if (isNodeJS) {
+            sshKeyPath = getSshKeyPath(sshKeyName);
+        } else {
+            throw new Error(`both 'privateKey' and 'email'/'username' must be specified`);
+        }
     }
-    if (!sshKeyPath) {
-        const homeDir = os.homedir();
-        const key = sshKeyName || 'id_rsa';
-        sshKeyPath = `${homeDir}/.ssh/${key}`;
-
-    }
-    if (!privateKey) {
-        privateKey = fs.readFileSync(sshKeyPath, "utf8");
+    if (!session.auth.privateKey) {
+        const file = await getFile(sshKeyPath);
+        session.auth.privateKey = file.toString();
     }
 
-    if (!email) {
+    if (loadEmail) {
         try {
-            const publicKeyEmail = fs.readFileSync(`${sshKeyPath}.pub`, "utf8").split(' ')[2];
-            if (publicKeyEmail && publicKeyEmail.length > 1) {
-                email = publicKeyEmail.trim();
+            const pub = await getFile(`${sshKeyPath}.pub`);
+            const publicKeyEmail = getPubEmail(pub.toString());
+            if (publicKeyEmail) {
+                session.auth.email = publicKeyEmail;
             }
         } catch (e) {
             //safe to ignore
         }
     }
 
+    startWS(url, session, protocols, options, syncContexts);
+};
+
+let EventEmitter;
+module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token, protocols, options, emitter, syncContexts = true, logTargets = true}) => {
     if (!emitter) {
-        if (!EventEmitter) EventEmitter = require('events');
+        if (!EventEmitter) {
+            EventEmitter = require('events');
+        }
         emitter = new EventEmitter();
     }
     const session = {
@@ -411,6 +431,6 @@ module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, em
         on: (type, listener) => emitter.on(type, listener),
         emit: (type, ...args) => emitter.emit(type, ...args),
     };
-    startWS(url, session, protocols, options, syncContexts);
+    doConnect({session, url, sshKeyPath, sshKeyName, protocols, options, syncContexts}).catch(e => console.error(`can not connect: '${e}'`));
     return session;
 };

@@ -1,6 +1,7 @@
 const {Validator} = require('jsonschema');
 
 const string = {"type": "string"};
+const boolean = {"type": "boolean"};
 
 const integer = {"type": "number", "multipleOf": 1};
 const timestamp = {...integer, "minimum": 1};
@@ -18,7 +19,7 @@ const UserLog = {
     "type": "object",
     "properties": {
         at: timestamp,
-        type: integer
+        type: string
     }
 };
 const User = {
@@ -29,6 +30,7 @@ const User = {
         name: string,
         emails: {"type": "array", "items": string},
         sshKeys: {"type": "array", "items": SshKey},
+        systemUser: boolean,
         logs: {"type": "array", "items": UserLog},
     },
     "required": []

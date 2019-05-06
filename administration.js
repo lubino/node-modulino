@@ -1,8 +1,8 @@
-const crypto = require("crypto");
 const {getContexts, contextFor, registerContext} = require("./context");
-const {user, getUsers, addUser, publicKeysByEmail, logUser} = require("./users");
+const {user, getUsers, addUser, publicKeysByEmail, logUser, sshUser} = require("./users");
 const {rootLogger} = require('./logger');
 const {asyncRequire} = require('./installer');
+const {checkSignature} = require('./security');
 
 let pty;
 
@@ -18,7 +18,7 @@ const methods = {
         }
     },
     session: (session, id) => ({session: sessions[id]}),
-    sessions: (session) => ({sessions: Object.keys(sessions)}),
+    sessions: (session) => ({sessions: {ids: Object.keys(sessions), myId: session.id}}),
     closeSession: (session, id) => {
         if (id) {
             session = sessions[id];
@@ -68,24 +68,17 @@ const methods = {
     exit: (session, {code} = {}) => {
         process.exit(code || 0);
     },
-    AUTH: (session, {username, email, signature, token}) => {
+    AUTH: async (session, {username, email, signature, token}) => {
         if (!token === session.authenticated) return;
-        const publicKeys = publicKeysByEmail(username, email);
+        const publicKeys = await publicKeysByEmail(username, email);
         if (publicKeys) {
             if (token) {
                 session = sessions[token];
                 if (!session || session.at + session.timeout < Date.now()) throw new Error('401');
             }
-            const publicKey = publicKeys.find(publicKey => {
-                try {
-                    const decrypted = crypto.publicDecrypt(publicKey, Buffer.from(signature, 'base64')).toString();
-                    return decrypted === session.id;
-                } catch (e) {
-                    return false;
-                }
-            });
+            const publicKey = publicKeys.find(publicKey => checkSignature(publicKey, signature, session.id));
             if (publicKey != null) {
-                const usr = logUser(username, email, true);
+                const usr = logUser(username, email, true) || sshUser(username, email);
                 if (!usr) throw new Error('401');
                 const user = {...usr, sshKeys: undefined};
                 session.authenticated = true;

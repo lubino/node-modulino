@@ -1,6 +1,6 @@
 {
   "name": "modulino",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Simple NodeJS Application Server",
   "main": "modulino.js",
   "scripts": {},
@@ -10,8 +10,7 @@
   "devDependencies": {},
   "dependencies": {
     "eslint": "^5.7.0",
-    "jsonschema": "^1.2.4",
-    "server-static": "^2.0.5"
+    "jsonschema": "^1.2.4"
   },
   "repository": {
     "type": "git",
@@ -45,6 +44,7 @@
     "modulino.js",
     "renderPage.js",
     "runModule.js",
+    "security.js",
     "users.js",
     "webHandlers.js"
   ]

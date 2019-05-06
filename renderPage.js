@@ -7,8 +7,10 @@ const options = {
 
 const compilePage = async (type, filePath, file, api, logger) => {
     switch (type) {
+        case 'html':
+            return () => file;
         case 'pug':
-            const pug = await asyncRequire(logger, type);
+            const pug = await asyncRequire(logger, 'pug');
             const js = pug.compileClient(file, {filename: filePath})+"; window.template = template;";
             runJS(filePath, api, js);
             return api.window.template;

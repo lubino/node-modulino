@@ -1,3 +1,6 @@
+const {asyncRequire} = require("./installer");
+const {getAuthorizedKeys, getPubEmail} = require("./security");
+const {getFile} = require("./fsWatcher");
 const {validateUser} = require("./jsonSchema");
 const {rootLogger} = require('./logger');
 
@@ -24,16 +27,54 @@ const getUser = (username, email) => {
 };
 
 const getUsers = () => Object.keys(users);
-const saveUser = user => (user.username);
+let saveUsers;
+const saver = save => {
+    saveUsers = save;
+    saveUser();
+};
+const saveUser = (user) => saveUsers && saveUsers(Object.values(users), user).catch(e => rootLogger.error(`can not save users: ${e}`, e));
 
-const userShhKeys = (username, email) => {
+const userShhKeys = async (username, email) => {
     const user = getUser(username, email);
-    return (user && user.sshKeys) || [];
+    const userShhKeys = user && user.sshKeys;
+    const keys = userShhKeys ? [...userShhKeys] : [];
+
+    if (email && (!user || user.systemUser)) {
+        const emailLowerCase = email.toLowerCase();
+        try {
+            const sshKeyToPEM = await asyncRequire(rootLogger, 'ssh-key-to-pem');
+            const file = await getFile(getAuthorizedKeys());
+            file.toString().split('\n').forEach(pub => {
+                if (getPubEmail(pub) === emailLowerCase) {
+                    keys.push({
+                        name: email,
+                        publicKey: sshKeyToPEM(pub)
+                    });
+                }
+            });
+        } catch (e) {
+            // safe to ignore
+        }
+    }
+    return keys;
 };
 
 const user = ({username, email}) => cloneUser(getUser(username, email));
 
-const publicKeysByEmail = (username, email) => userShhKeys(username, email).map(({publicKey})=> publicKey);
+const publicKeysByEmail = async (username, email) => {
+    const keys = await userShhKeys(username, email);
+    return keys.map(({publicKey})=> publicKey);
+};
+
+const sshUser = (username, email) => {
+    return {
+        username: username,
+        name: 'ssh user',
+        emails: [email],
+        sshKeys: [],
+        logs: [],
+    };
+};
 
 const logUser = (username, email, authenticated) => {
     const user = getUser(username, email);
@@ -43,8 +84,8 @@ const logUser = (username, email, authenticated) => {
     return authenticated ? cloneUser(user) : null;
 };
 
-const publicKeyByEmailAndName = (username, email, name) => {
-    const sshKeys = userShhKeys(username, email);
+const publicKeyByEmailAndName = async (username, email, name) => {
+    const sshKeys = await userShhKeys(username, email);
     const {length} = sshKeys;
     let sshKey = length === 1 ? sshKeys[0] : null;
     if (!sshKey && name) {
@@ -64,16 +105,18 @@ const cloneUser = user => {
     return {...user, emails, sshKeys, logs};
 };
 
+const validationErrors = errors => errors.map(e => `property '${e.name}' (${e.property}) ${e.message} (${JSON.stringify(e.instance)})`);
+
 const addUser = (user) => {
     const errors = validateUser(user);
     if (errors.length) {
-        const message = `can not add user: ${errors.map(e => e.message)}`;
+        const message = `can not add user: ${validationErrors(errors)}`;
         rootLogger.error(message, user);
         const error = new Error(message);
         error.errors = errors;
         throw error;
     }
-    let {name, username, email, emails, sshKeys} = user;
+    let {name, username, email, emails, sshKeys, systemUser = false} = user;
 
     if (!str(username) || users[username]) do {
         username = `user_${Math.round(Math.random()*1000000).toString(16)}${indexer}`;
@@ -90,11 +133,11 @@ const addUser = (user) => {
 
     indexer++;
     const logs = [];
-    const result = {name, username, emails, sshKeys,logs};
+    const result = {name, username, emails, sshKeys, systemUser, logs};
     users[username] = result;
     saveUser(result);
     emails.map(email => usernameByEmail[email] = username);
     return cloneUser(result);
 };
 
-module.exports = {getUsers, user, addUser, publicKeysByEmail, logUser};
+module.exports = {getUsers, user, addUser, publicKeysByEmail, logUser, sshUser, saver};

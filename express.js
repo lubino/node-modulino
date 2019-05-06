@@ -1,6 +1,8 @@
-const {contextForPath, registerContext, resolveBy, addFileListener, removeFileListener} = require('./context');
+const {contextForPath, registerContext, resolveBy, addFileListener, removeFileListener, saver: contextSaver} = require('./context');
 const {createSession, destroySession, sessionStarted, onMessage} = require("./administration");
 const {setListener, rootLogger, logToConsole} = require("./logger");
+const {readFile, saveFile} = require('./fsWatcher');
+const {addUser, saver: usersSaver} = require('./users');
 
 const pathOf = req => req._parsedUrl.pathname;
 const parsePath = req => {
@@ -101,7 +103,7 @@ const extendExpressApp = async (app, options) => {
     extendedExpress.logToConsole = logToConsole;
 
     if (options) {
-        const {administrationApi, contexts, consoleLogger} = options;
+        const {administrationApi, contexts, consoleLogger, usersJson, contextsJson} = options;
         if (administrationApi != null) {
             extendedExpress.useAdministrationApi(administrationApi);
         }
@@ -110,6 +112,46 @@ const extendExpressApp = async (app, options) => {
         }
         if (consoleLogger != null) {
             logToConsole(consoleLogger);
+        }
+        if (usersJson && typeof usersJson === 'string') {
+            const data = await readFile(usersJson);
+            if (!data) {
+                throw new Error(`Can not start app because file '${usersJson}' from property 'usersJson' can not be read`);
+            }
+            try {
+                const users = JSON.parse(data);
+                for (const user of users) {
+                    addUser(user);
+                }
+                usersSaver(async (users, user) => {
+                    if (user) {
+                        await saveFile(usersJson, JSON.stringify(users, null, 2))
+                    }
+                });
+            } catch (e) {
+                throw new Error(`Can not start app because: ${e}`);
+            }
+        }
+        if (contextsJson && typeof contextsJson === 'string') {
+            const data = await readFile(contextsJson);
+            if (!data) {
+                throw new Error(`Can not start app because file '${contextsJson}' from property 'contextsJson' can not be read`);
+            }
+            const contexts = JSON.parse(data);
+            await Promise.all(contexts.map(async options => await registerContext(options)));
+            let waiter = null;
+            contextSaver(async (allOptions, options) => {
+                if (waiter) {
+                    await waiter;
+                }
+                let onFinish;
+                waiter = new Promise(resolve => onFinish = resolve);
+                if (options) {
+                    await saveFile(contextsJson, JSON.stringify(allOptions, null, 2))
+                }
+                onFinish();
+                waiter = null;
+            });
         }
     }
     return extendedExpress;

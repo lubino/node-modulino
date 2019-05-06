@@ -2,10 +2,11 @@ const EventEmitter = require('events');
 const {featuresForContext} = require('./features');
 const {modulesForContext} = require('./module');
 const {watchDirAt, filePathReader, filePathWriter} = require('./fsWatcher');
-const {createLogger} = require("./logger");
+const {createLogger, rootLogger} = require("./logger");
 const {createModule} = require("./moduleFactory");
 
 const contexts = {};
+const contextsOptions = [];
 
 const pathToId = path => {
     let result = "";
@@ -19,18 +20,37 @@ const pathToId = path => {
     return result;
 };
 
-const newContext = (id, path) => {
+let saveAllOptions;
+const saver = save => {
+    saveAllOptions = save;
+    saveOptions();
+};
+const saveOptions = (options) => saveAllOptions && saveAllOptions([...contextsOptions], options).catch(e => rootLogger.error(`can not save context: ${e}`, e));
+
+
+const newContext = (id, path, options) => {
     const emitter = new EventEmitter();
     const context = {id, path};
     context.register = () => {
-        emitter.emit('register');
         const old = contexts[context.path];
-        if (old) old.unregister();
+        if (old) {
+            old.unregister();
+        }
+        rootLogger.info(`creating context '${id}' at '${path}'`);
+        contextsOptions.push(options);
+        saveOptions(options);
+        emitter.emit('register', options);
         contexts[context.path] = context;
     };
     context.unregister = () => {
-        emitter.emit('unregister');
         if (contexts[context.path] === context) {
+            rootLogger.info(`removing context '${id}' at '${path}'`);
+            emitter.emit('unregister');
+            const i = contextsOptions.indexOf(options);
+            if (i >= 0) {
+                contextsOptions.splice(i, 1);
+                saveOptions(options);
+            }
             delete contexts[context.path];
             return true;
         }
@@ -73,6 +93,7 @@ function getFileType(file) {
             pageType = name;
             path = `${withoutExtension}.html`
         } else if (path.endsWith('.html')) {
+            pageType = 'html';
             const withoutExtension = path.substr(0, path.length - 5);
             paths.push(withoutExtension);
         }
@@ -113,17 +134,25 @@ const unregisterPath = (path) => {
     }
 
 };
-const registerPath = (path, headers) => {
-    let headerResolver;
+const registerPath = (path, headers, url) => {
+    let pathResolver;
     if (headers) {
         const entries = Object.entries(headers);
         const {length, 0: first} = entries;
         if (length === 1) {
             const [name, value] = first;
-            if (Array.isArray(value)) {
-                headerResolver = ({headers}) => value.includes(headers[name]);
+            if (url) {
+                if (Array.isArray(value)) {
+                    pathResolver = ({headers, originalUrl}) => originalUrl.startsWith(url) && value.includes(headers[name]);
+                } else {
+                    pathResolver = ({headers, originalUrl}) => originalUrl.startsWith(url) && value === headers[name];
+                }
             } else {
-                headerResolver = ({headers}) => value === headers[name];
+                if (Array.isArray(value)) {
+                    pathResolver = ({headers}) => value.includes(headers[name]);
+                } else {
+                    pathResolver = ({headers}) => value === headers[name];
+                }
             }
         } else {
             const ignore = entries.map(([name, value]) => {
@@ -132,13 +161,19 @@ const registerPath = (path, headers) => {
                 }
                 return headers => headers[name] !== value;
             });
-            headerResolver = ({headers}) => !ignore.find(i => i(headers));
+            if (url) {
+                pathResolver = ({headers, originalUrl}) => originalUrl.startsWith(url) && !ignore.find(i => i(headers));
+            } else {
+                pathResolver = ({headers}) => !ignore.find(i => i(headers));
+            }
         }
+    } else if (url) {
+        pathResolver = ({originalUrl}) => originalUrl.startsWith(url);
     } else {
         defaultPath = path;
     }
-    if (headerResolver) {
-        addPathResolver(path, headerResolver);
+    if (pathResolver) {
+        addPathResolver(path, pathResolver);
     }
 };
 
@@ -147,16 +182,16 @@ const addFileListener = listener => fileListeners.push(listener);
 const removeFileListener = listener => fileListeners.splice(fileListeners.indexOf(listener), 1);
 
 let serveStatic;
-const getServerStatis = () => {
+const getServerStatic = () => {
     if (!serveStatic) serveStatic = require('serve-static');
     return serveStatic;
 };
 
 const registerContext = async options => {
     if (!options) return;
-    const {path, headers} = options;
+    const {path, headers, url = ""} = options;
     if (!path) return;
-    const context = newContext(pathToId(path), path);
+    const context = newContext(pathToId(path), path, options);
     const {id} = context;
     context.createLogger = filePath => createLogger(id, filePath);
     context.on('unregister', () => {
@@ -168,7 +203,7 @@ const registerContext = async options => {
     });
     context.on('register', () => {
         if (!context.registered) {
-            registerPath(path, headers);
+            registerPath(path, headers, url);
             context.registered = true;
         }
     });
@@ -179,7 +214,22 @@ const registerContext = async options => {
 
 
     let staticRequest;
-    const getStaticRequest = () => staticRequest || (staticRequest = getServerStatis()(path));
+    const getStaticRequest = () => {
+        if (!staticRequest) {
+            const serverStatic = getServerStatic()(path);
+            if (url) {
+                const {length} = url;
+                staticRequest = (req, res, next) => {
+                    const url = req.url.substr(length);
+                    serverStatic({...req, url}, res, next);
+                };
+            } else {
+                staticRequest = serverStatic;
+
+            }
+        }
+        return staticRequest;
+    };
 
     context.files = await watchDirAt(path, data => {
         const {newFiles, removedFiles} = data;
@@ -195,10 +245,15 @@ const registerContext = async options => {
         });
         if (fileListeners.length) fileListeners.map(listener => listener({id, newFiles, removedFiles}));
     });
-    context.moduleAt = urlPath => module(urlPath);
+    if (url) {
+        const {length} = url;
+        context.moduleAt = urlPath => module(urlPath.substr(length));
+    } else {
+        context.moduleAt = urlPath => module(urlPath);
+    }
     context.register();
     return context;
 };
 
 
-module.exports = {contextFor, contextForPath, getContexts, registerContext, resolveBy, addFileListener, removeFileListener};
+module.exports = {contextFor, contextForPath, getContexts, registerContext, resolveBy, addFileListener, removeFileListener, saver};
