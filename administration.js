@@ -2,7 +2,7 @@ const {getContexts, contextFor, registerContext} = require("./context");
 const {user, getUsers, addUser, publicKeysByEmail, logUser, sshUser} = require("./users");
 const {rootLogger} = require('./logger');
 const {asyncRequire} = require('./installer');
-const {checkSignature} = require('./security');
+const {publicDecrypt} = require('./security');
 
 let pty;
 
@@ -30,6 +30,7 @@ const methods = {
     pty: async (session, {start, cols, rows, resize, msg}) => {
         if (start) {
             if (session.term) {
+                session.administrationEmitter('terminalClosed', {pid: session.term.pid});
                 session.term.kill();
                 delete session.term;
             }
@@ -53,6 +54,7 @@ const methods = {
             const {pid} = term;
 
             session.term = term;
+            session.administrationEmitter('terminalStarted', {pid});
 
             return {newTerm: {pid}}
         }
@@ -69,27 +71,30 @@ const methods = {
         process.exit(code || 0);
     },
     AUTH: async (session, {username, email, signature, token}) => {
-        if (!token === session.authenticated) return;
+        const notMe = token && session.id !== token;
+        if (notMe && !session.authenticated) {
+            return;
+        }
         const publicKeys = await publicKeysByEmail(username, email);
         if (publicKeys) {
-            if (token) {
-                session = sessions[token];
-                if (!session || session.at + session.timeout < Date.now()) throw new Error('401');
-            }
-            const publicKey = publicKeys.find(publicKey => checkSignature(publicKey, signature, session.id));
+            let sessionToAuth = notMe ? sessions[token] : session;
+            if (!sessionToAuth || sessionToAuth.at + sessionToAuth.timeout < Date.now()) throw new Error('401');
+            const publicKey = publicKeys.find(publicKey => checkSignature(publicKey, signature, sessionToAuth.id));
             if (publicKey != null) {
                 const usr = logUser(username, email, true) || sshUser(username, email);
                 if (!usr) throw new Error('401');
                 const user = {...usr, sshKeys: undefined};
-                session.authenticated = true;
-                if (token) {
-                    session.send("USR", user);
+                sessionToAuth.authenticated = true;
+                if (notMe) {
+                    sessionToAuth.send("USR", user);
                 }
-                return {USR: user};
+                session.administrationEmitter('userAuthenticated', {sessionId: session.id, name: user.name});
+                return notMe ? {AUTH_USR: {user, token}} : {USR: user};
             } else {
                 logUser(username, email, false);
             }
         }
+        session.administrationEmitter('userNotAuthenticated', {sessionId: session.id, username, email});
         throw new Error('401');
     },
     contexts: (session) => {
@@ -127,6 +132,15 @@ const methods = {
             return {fileNotStored: {contextId, filePath, message: e.message}}
         }
 
+    }
+};
+
+const checkSignature = (publicKey, signature, correctValue) => {
+    try {
+        const decrypted = publicDecrypt(publicKey, signature);
+        return decrypted === correctValue;
+    } catch (e) {
+        return false;
     }
 };
 
@@ -169,9 +183,10 @@ const createSession = (atts) => {
     return session;
 };
 
-const sessionStarted = session => {
+const sessionStarted = (session, query) => {
     const {id: token} = session;
     session.send("AUTH", {token});
+    session.administrationEmitter('sessionStarted', {id: session.id, query});
 };
 
 const destroySession = session => {
@@ -184,6 +199,7 @@ const destroySession = session => {
     }
     if (sessions[session.id]) {
         delete sessions[session.id];
+        session.administrationEmitter('sessionClosed', {id: session.id});
         return true;
     }
     return false;

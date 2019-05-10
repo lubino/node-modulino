@@ -1,5 +1,6 @@
 const {asyncRequire} = require("./installer");
-const {getAuthorizedKeys, getPubEmail} = require("./security");
+const {getAuthorizedKeys} = require("./security");
+const {getPubEmail} = require("./client");
 const {getFile} = require("./fsWatcher");
 const {validateUser} = require("./jsonSchema");
 const {rootLogger} = require('./logger');

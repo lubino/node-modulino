@@ -1,31 +1,36 @@
-const {getSshKeyPath, userInfo, getPubEmail} = require("./security");
-const {getFS} = require("./fsWatcher");
-const {getCrypto} = require("./security");
-const {watchDirAt, getFile} = require('./fsWatcher');
-
-const isNodeJS = true;
+const {getSshKeyPath, userInfo, privateEncrypt, getPrivateKey, getPublicKey} = require("./security");
+const {getFS, watchDirAt} = require('./fsWatcher');
+const {EventEmitter} = require('./EventEmitter');
+const {createWebSocket} = require('./ws');
 
 const createMethods = session => ({
     ERR: err => {
         console.log("error received", err);
-        err === 401 && session.close();
+        if (err === "401") {
+            session.close();
+        }
+    },
+    administration: item => {
+        session.emit(item.name, item.data);
     },
     log: item => {
         console.log(item.message);
-        if (session.logTargets && item.stack) console.log(item.stack);
+        if (session.logTargets && item.stack) {
+            console.log(item.stack);
+        }
     },
     change: async data => {
         const {id, newFiles, removedFiles} = data;
-        await Promise.all(newFiles.map(async filePath => {
+        for (const filePath of newFiles) {
             const path = id + filePath;
             session.ignoredFilesByWatcher[path] = true;
             await session.downloadFile(id, filePath);
-        }));
-        await Promise.all(removedFiles.map(async filePath => {
+        }
+        for (const filePath of removedFiles) {
             const path = id + filePath;
             session.ignoredFilesByWatcher[path] = true;
             await rmFile(path);
-        }));
+        }
     },
     USR: (user) => {
         console.log(`user '${user.name}' authenticated`);
@@ -58,22 +63,13 @@ function same(a, b) {
     return a === b;
 }
 
-let webSocket;
-const getWebSocket = () => {
-    if (!webSocket) {
-        webSocket = require('ws');
-    }
-    return webSocket
-};
-
 function startWS(url, session, protocols, options, syncContexts) {
     let ws;
     try {
         let isError = false;
         console.log(`opening ws '${url}'`);
         session.emit('open', url, protocols, options);
-        const WebSocket = getWebSocket();
-        ws = new WebSocket(url, protocols, options);
+        ws = createWebSocket(url, protocols, options);
         ws.on('error', e => {
             isError = true;
             session.emit('error', e);
@@ -93,18 +89,26 @@ function startWS(url, session, protocols, options, syncContexts) {
     });
 
     session.close = () => {
-        if (session.connected) ws.close();
-        Object.values(promises).map(items => items.map(({reject}) => reject("Closing ws")));
-        session.contexts && session.contexts.map(context => {
-            context.files && context.files['/']();
-        });
-        session.emit('close');
+        if (!session.closed) {
+            session.closed = true;
+            console.log(`closing session '${session.id}'`);
+            if (session.connected) {
+                ws.close();
+            }
+            Object.values(promises).map(items => items.map(({reject}) => reject("closing session")));
+            session.contexts && session.contexts.map(context => {
+                context.files && context.files['/']();
+            });
+            session.emit('close');
+        }
     };
     session.send = (name, data) => {
         try {
             session.emit('send', name, data);
-            !session.closed && ws.send(name + (data !== undefined ? "\n" + JSON.stringify(data) : ""));
-            resetPing();
+            if (!session.closed) {
+                ws.send(name + (data !== undefined ? "\n" + JSON.stringify(data) : ""));
+                resetPing();
+            }
         } catch (e) {
             console.log(`can not send message ${name}=${data}: `, e);
         }
@@ -142,7 +146,6 @@ function startWS(url, session, protocols, options, syncContexts) {
         console.log(`closing websocket (closing code ${code})`);
         closePing();
         session.connected = false;
-        session.closed = true;
         session.close();
     });
 
@@ -172,7 +175,9 @@ function startWS(url, session, protocols, options, syncContexts) {
         const method = methods[methodName];
         if (method) {
             const response = await method(obj);
-            if (response) sendAll(response);
+            if (response) {
+                sendAll(response);
+            }
         }
     });
 
@@ -184,10 +189,9 @@ const comm = async (session, message, syncContexts) => {
     const {token} = await message('AUTH');
     session.id = token;
 
-    await authorize(session);
+    await authorizeUsingSession(session, session.id);
     session.user = await message('USR');
     session.emit('authorized', session.user);
-    session.authorize = token => authorize(session, token);
 
     if (syncContexts) {
         session.emit('sync');
@@ -195,15 +199,18 @@ const comm = async (session, message, syncContexts) => {
         session.emit('synced');
     }
     session.emit('ready');
-
 };
 
-const authorize = async (session, token) => {
-    const {id, auth: {privateKey, username, email}} = session;
-    const enc = token || id;
-    const signature = getCrypto().privateEncrypt(privateKey, Buffer.from(enc)).toString("base64");
-    console.log(`authenticating session '${enc}'`);
-    session.send('AUTH', {email, username, signature, token});
+const authorizeUsingSession = async (session, token) => {
+    const {auth: {privateKey, username, email}} = session;
+    try {
+        const signature = privateEncrypt(privateKey, token);
+        console.log(`authenticating session '${token}'`);
+        session.send('AUTH', {email, username, signature, token});
+    } catch (e) {
+        console.error(`authentication error`, e);
+        session.emit('authenticationFailed', token);
+    }
 };
 
 const syncDirs = async (session, message) => {
@@ -286,45 +293,38 @@ const syncDirs = async (session, message) => {
         };
 
         await addTree('/', files);
-        console.log(`received context '${id}': ${allFiles.join(', ')}`);
+        console.log(`received context '${id}': ${(allFiles.length > 10 ? [...allFiles.slice(0, 10), '...'] : allFiles).join(', ')}`);
 
         await Promise.all(downloadFiles.map(async ({id, filePath}) => await session.downloadFile(id, filePath)));
         const filesToRemove = [];
-        await Promise.all(Object.entries(existing).map(async ([key, {isDir}]) => {
+        Object.entries(existing).forEach(([key, {isDir}]) => {
             if (!isDir) {
                 filesToRemove.push(key);
             }
-        }));
-        await Promise.all(filesToRemove.map(async key => {
+        });
+        for (const key of filesToRemove) {
             delete existing[key];
             await rmFile(key);
-        }));
-        await Promise.all(Object.keys(existing).map(async key => {
+        }
+        for (const key of Object.keys(existing)) {
             const items = await listDir(key);
             if (!items.length) {
                 delete existing[key];
-                rmDir(key);
+                await rmDir(key);
             }
-        }));
+        }
 
         //watching dir
         context.files = await watchDirAt(id, async ({newFiles, removedFiles}) => {
-            await Promise.all(removedFiles.map(async filePath => {
+            const removedAndNewFiles = [...removedFiles, ...newFiles];
+            for (const filePath of removedAndNewFiles) {
                 const key = id + filePath;
                 if (ignoredFilesByWatcher[key]) {
                     delete ignoredFilesByWatcher[key];
                 } else {
                     await session.unloadFile(id, filePath);
                 }
-            }));
-            await Promise.all(newFiles.map(async filePath => {
-                const key = id + filePath;
-                if (ignoredFilesByWatcher[key]) {
-                    delete ignoredFilesByWatcher[key];
-                } else {
-                    await session.uploadFile(id, filePath);
-                }
-            }));
+            }
         });
     }));
 };
@@ -385,27 +385,33 @@ const fileStat = (path) => new Promise(resolve =>
     getFS().stat(path, (err, stat) => err ? resolve(null) : resolve(stat))
 );
 
+const getPubEmail = (pub) => {
+    if (!pub || pub.startsWith('#')) {
+        return null;
+    }
+    const publicKeyEmail = pub.split(' ')[2];
+    if (publicKeyEmail && publicKeyEmail.length > 1) {
+        return publicKeyEmail.trim().toLowerCase();
+    }
+    return null;
+};
+
 const doConnect = async ({session, url, sshKeyPath, sshKeyName, protocols, options, syncContexts}) => {
     if (!session.auth.username) {
         session.auth.username = userInfo().username;
     }
     const loadEmail = !session.auth.email || !session.auth.username;
     if (!sshKeyPath && !session.auth.privateKey && loadEmail) {
-        if (isNodeJS) {
-            sshKeyPath = getSshKeyPath(sshKeyName);
-        } else {
-            throw new Error(`both 'privateKey' and 'email'/'username' must be specified`);
-        }
+        sshKeyPath = getSshKeyPath(sshKeyName);
     }
     if (!session.auth.privateKey) {
-        const file = await getFile(sshKeyPath);
-        session.auth.privateKey = file.toString();
+        session.auth.privateKey = await getPrivateKey(sshKeyPath);
     }
 
     if (loadEmail) {
         try {
-            const pub = await getFile(`${sshKeyPath}.pub`);
-            const publicKeyEmail = getPubEmail(pub.toString());
+            const pub = await getPublicKey(sshKeyPath);
+            const publicKeyEmail = getPubEmail(pub);
             if (publicKeyEmail) {
                 session.auth.email = publicKeyEmail;
             }
@@ -417,18 +423,34 @@ const doConnect = async ({session, url, sshKeyPath, sshKeyName, protocols, optio
     startWS(url, session, protocols, options, syncContexts);
 };
 
-let EventEmitter;
-module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token, protocols, options, emitter, syncContexts = true, logTargets = true}) => {
+module.exports.getPubEmail = getPubEmail;
+
+module.exports.connect = ({url, username, sshKeyName, sshKeyPath, privateKey, email, token, protocols, options, emitter, syncContexts = false, logTargets = false}) => {
     if (!emitter) {
-        if (!EventEmitter) {
-            EventEmitter = require('events');
-        }
         emitter = new EventEmitter();
     }
+    const auth = {privateKey, email, token, username};
+    const authorize = (token, cb = null) => {
+        if (!auth.privateKey) {
+            if (cb) {
+                cb();
+            }
+            throw new Error('Can not authorize session without private key');
+        }
+        authorizeUsingSession(session, token).then(() => cb && cb()).catch(err => {
+            console.log("auth. error", err);
+            if (cb) {
+                cb();
+            }
+        });
+    };
     const session = {
+        url,
         logTargets,
-        auth: {privateKey, email, token, username},
+        authorize,
+        auth,
         on: (type, listener) => emitter.on(type, listener),
+        removeListener: (type, listener) => emitter.removeListener(type, listener),
         emit: (type, ...args) => emitter.emit(type, ...args),
     };
     doConnect({session, url, sshKeyPath, sshKeyName, protocols, options, syncContexts}).catch(e => console.error(`can not connect: '${e}'`));

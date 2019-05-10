@@ -1,8 +1,7 @@
+const {getFile} = require('./fsWatcher');
+
 let crypto;
-let os = require ? undefined : {
-    userInfo: () => ({}),
-    homedir: () => ""
-};
+let os;
 
 const getCrypto = () => {
     if (!crypto) {
@@ -22,27 +21,22 @@ const getSshKeyPath = (sshKeyName) => {
     return `${homeDir}/.ssh/${key}`;
 };
 
-const getPubEmail = (pub) => {
-    if (!pub || pub.startsWith('#')) {
-        return null;
-    }
-    const publicKeyEmail = pub.split(' ')[2];
-    if (publicKeyEmail && publicKeyEmail.length > 1) {
-        return publicKeyEmail.trim().toLowerCase();
-    }
-    return null;
-};
-
 const getAuthorizedKeys = () => `${homedir()}/.ssh/authorized_keys`;
 
-const checkSignature = (publicKey, signature, correctValue) => {
-    try {
-        const decrypted = getCrypto().publicDecrypt(publicKey, Buffer.from(signature, 'base64')).toString();
-        return decrypted === correctValue;
-    } catch (e) {
-        return false;
-    }
+const getPrivateKey = async (sshKeyPath) => {
+    const file = await getFile(sshKeyPath);
+    return file.toString();
 };
 
+const getPublicKey = async (sshKeyPath) => {
+    const file = await getFile(`${sshKeyPath}.pub`);
+    return file.toString();
+};
 
-module.exports = {checkSignature, getCrypto, userInfo, homedir, getSshKeyPath, getAuthorizedKeys, getPubEmail};
+const publicDecrypt = (publicKey, signature) => getCrypto().publicDecrypt(publicKey, Buffer.from(signature, 'base64')).toString();
+const privateEncrypt = (privateKey, data) => getCrypto().privateEncrypt(privateKey, Buffer.from(data)).toString("base64");
+
+module.exports = {
+    publicDecrypt, getCrypto, userInfo, homedir, getSshKeyPath, getAuthorizedKeys, privateEncrypt,
+    getPrivateKey, getPublicKey
+};

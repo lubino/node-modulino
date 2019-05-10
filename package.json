@@ -1,6 +1,6 @@
 {
   "name": "modulino",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Simple NodeJS Application Server",
   "main": "modulino.js",
   "scripts": {},
@@ -29,15 +29,24 @@
   },
   "homepage": "https://github.com/lubino/node-modulino#readme",
   "files": [
+    "static/administration.html",
+    "static/crypto.min.js",
+    "static/fit.min.js",
+    "static/main.js",
+    "static/qrcode.min.js",
+    "static/xterm.min.css",
+    "static/xterm.min.js",
     "administration.js",
     "cli.js",
     "client.js",
     "context.js",
     "eslint.js",
+    "EventEmitter.js",
     "express.js",
     "features.js",
     "fsWatcher.js",
     "installer.js",
+    "jsonSchema.js",
     "logger.js",
     "module.js",
     "moduleFactory.js",
@@ -46,6 +55,7 @@
     "runModule.js",
     "security.js",
     "users.js",
-    "webHandlers.js"
+    "webHandlers.js",
+    "ws.js"
   ]
 }

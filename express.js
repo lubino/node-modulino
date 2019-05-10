@@ -1,6 +1,6 @@
 const {contextForPath, registerContext, resolveBy, addFileListener, removeFileListener, saver: contextSaver} = require('./context');
 const {createSession, destroySession, sessionStarted, onMessage} = require("./administration");
-const {setListener, rootLogger, logToConsole} = require("./logger");
+const {setListener, logToConsole, rootLogger} = require("./logger");
 const {readFile, saveFile} = require('./fsWatcher');
 const {addUser, saver: usersSaver} = require('./users');
 
@@ -21,21 +21,69 @@ const keyOf = {
     DELETE: "onDelete"
 };
 
+let administrationEmitter;
 const administrationExpressApp = (app, path = '/administrationApi', options) => {
-    const listeners = [];
-    const {timeout = 600000} = options;
+    const logListeners = [];
+    const {timeout = 60000} = options;
     if (app.ws) {
+        if (!administrationEmitter) {
+            const listeners = [];
+            administrationEmitter = (name, data) => {
+                for (const listener of listeners) {
+                    listener(name, data);
+                }
+            };
+            administrationEmitter.add = listener => listeners.push(listener);
+            administrationEmitter.remove = listener => listeners.splice(listeners.indexOf(listener), 1).length === 1;
+        }
+        let manageSrc;
+        app.get(path, (req, res) => {
+            if (!manageSrc) {
+                const fs = require('fs');
+                manageSrc = fs.readFileSync(`${__dirname}/static/administration.html`).toString();
+                const xtermJS = fs.readFileSync(`${__dirname}/static/xterm.min.js`).toString();
+                const fitJS = fs.readFileSync(`${__dirname}/static/fit.min.js`).toString();
+                const xtermCSS = fs.readFileSync(`${__dirname}/static/xterm.min.css`).toString();
+                const administrationJs = fs.readFileSync(`${__dirname}/static/main.js`).toString();
+                const qrcodeJs = fs.readFileSync(`${__dirname}/static/qrcode.min.js`).toString();
+                const cryptoJs = fs.readFileSync(`${__dirname}/static/crypto.min.js`).toString();
+                const clientJs = fs.readFileSync(`${__dirname}/client.js`).toString();
+                const js = xtermJS + fitJS + administrationJs.replace('client.js();', clientJs)
+                    .replace('qrcode.js();', qrcodeJs)
+                    .replace('crypto.js();', cryptoJs);
+
+                const s = manageSrc.indexOf('</style>');
+                const i = manageSrc.indexOf('</body');
+                manageSrc = manageSrc.substr(0, s) + xtermCSS + manageSrc.substr(s, i) + `<script>${js}</script>` + manageSrc.substr(i);
+            }
+            res.type("html");
+            res.send(manageSrc);
+        });
         app.ws(path, (ws, req) => {
             const {query} = req;
             const session = createSession({timeout, ws, opened: true});
-            const {id} = session;
-            session.send = (name, data) => session.opened && ws.send(name + "\n" + JSON.stringify(data));
-            const listener = data => session.authenticated && session.send("log", data);
+            let autoClose = !timeout ? null : setTimeout(() => {
+                autoClose = null;
+                if (!session.authenticated) {
+                    destroySession(session);
+                }
+            }, timeout);
+            session.administrationEmitter = administrationEmitter;
+            session.send = (name, data) => {
+                try {
+                    session.opened && ws.send(name + "\n" + JSON.stringify(data));
+                } catch (e) {
+                    rootLogger.error(e);
+                }
+            };
+            const administrationListener = (name, data) => session.authenticated && session.send("administration", {name, data});
+            administrationEmitter.add(administrationListener);
+            const logListener = data => session.authenticated && session.send("log", data);
             const fileListener = data => session.authenticated && session.send("change", data);
-            listeners.push(listener);
+            logListeners.push(logListener);
             addFileListener(fileListener);
-            if (listeners.length === 1) {
-                setListener(item => setImmediate(() => listeners.map(listener => listener(item))));
+            if (logListeners.length === 1) {
+                setListener(item => setImmediate(() => logListeners.map(listener => listener(item))));
             }
             ws.on('message', data => {
                 if (data === 'ping') return;
@@ -50,17 +98,17 @@ const administrationExpressApp = (app, path = '/administrationApi', options) => 
                 onMessage(session, methodName, obj);
             });
             ws.on('close', () => {
+                clearTimeout(autoClose);
+                administrationEmitter.remove(administrationListener);
                 session.opened = false;
                 destroySession(session);
-                listeners.splice(listeners.indexOf(listener), 1);
-                if (listeners.length === 0) {
+                logListeners.splice(logListeners.indexOf(logListener), 1);
+                if (logListeners.length === 0) {
                     setListener(null)
                 }
                 removeFileListener(fileListener);
-                rootLogger.log(`administration socked '${id}' closed`);
             });
-            rootLogger.log(`new administration socked ${JSON.stringify({id, query})}`);
-            sessionStarted(session);
+            sessionStarted(session, query);
         });
     }
 

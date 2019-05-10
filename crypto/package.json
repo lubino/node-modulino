@@ -1,0 +1,16 @@
+{
+  "name": "rsa",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "browserify main.js | uglifyjs > crypto.min.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "browserify": "^16.2.3",
+    "crypto-browserify": "^3.12.0",
+    "uglify-js": "^3.5.11"
+  }
+}
