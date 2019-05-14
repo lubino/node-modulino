@@ -62,10 +62,9 @@ const hashParams = (() => {
 })();
 
 const session = client.connect({
-    // email: "lubos.strapko@me.com",
     logTargets: false,
     syncContexts: false,
-    url: location.origin.replace("http", "ws") + location.pathname,
+    url: ws.url(),
     options: {}
 });
 
@@ -117,7 +116,8 @@ session.on('message', (name, data) => {
 });
 
 session.on('authenticationFailed', (id) => {
-    const url = `${location.origin + location.pathname}#t=${id}`;
+    const webUrl = web.url();
+    const url = `${webUrl}#t=${id}`;
     console.log(`please authenticate, visit ${url} or run: session.authorize('${id}')`);
     const parent = el({className: "qr"});
     el({

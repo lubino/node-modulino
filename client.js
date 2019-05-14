@@ -73,7 +73,7 @@ function startWS(url, session, protocols, options, syncContexts) {
         ws.on('error', e => {
             isError = true;
             session.emit('error', e);
-            console.log(`ws error: ${e.message}`);
+            console.log(`ws error: ${e ? e.message : e}`);
         });
     } catch (e) {
         console.error(e);

@@ -4,6 +4,8 @@ const {setListener, logToConsole, rootLogger} = require("./logger");
 const {readFile, saveFile} = require('./fsWatcher');
 const {addUser, saver: usersSaver} = require('./users');
 
+const maxAge = 30*86400; // 30 days
+
 const pathOf = req => req._parsedUrl.pathname;
 const parsePath = req => {
     const {url} = req;
@@ -21,8 +23,33 @@ const keyOf = {
     DELETE: "onDelete"
 };
 
+const parseUrl = url => {
+    const protocolIndex = url.indexOf('://');
+    const protocol = protocolIndex > 0 ? url.substr(0, protocolIndex + 1).toLowerCase() : undefined;
+    const rest = protocolIndex >= 0 ? url.substr(protocolIndex+3) : url;
+    const contextIndex = rest.indexOf('/');
+    const hostname = contextIndex >= 0 ? contextIndex > 0 ? rest.substr(0, contextIndex).toLowerCase() : undefined : rest;
+    const context = contextIndex >= 0 ? rest.substr(contextIndex) : '/';
+    let wsUrl;
+    let webUrl;
+    if (hostname) {
+        const urlWithoutProtocol = `//${hostname}${context}`;
+        if (protocol) {
+            wsUrl = `"${protocol === 'https:' ? 'wss:' : 'ws:'}${urlWithoutProtocol}"`;
+            webUrl = `"${protocol}${urlWithoutProtocol}"`;
+        } else {
+            wsUrl = `(location.protocol === "https:" ? "wss:" : "ws:") +"${urlWithoutProtocol}"`;
+            webUrl = `location.protocol + "${urlWithoutProtocol}"`;
+        }
+    } else {
+        wsUrl = `(location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + "${context}"`;
+        webUrl = `location.protocol + "//" + location.host + "${context}"`;
+    }
+    return {wsUrl, webUrl, hostname, context};
+};
+
 let administrationEmitter;
-const administrationExpressApp = (app, path = '/administrationApi', options) => {
+const administrationExpressApp = (app, url = '/administrationApi', options) => {
     const logListeners = [];
     const {timeout = 60000} = options;
     if (app.ws) {
@@ -37,7 +64,11 @@ const administrationExpressApp = (app, path = '/administrationApi', options) => 
             administrationEmitter.remove = listener => listeners.splice(listeners.indexOf(listener), 1).length === 1;
         }
         let manageSrc;
-        app.get(path, (req, res) => {
+        const {wsUrl, webUrl, hostname, context} = parseUrl(url);
+        app.get(context, (req, res, next) => {
+            if (hostname && hostname !== req.headers.host) {
+                return next();
+            }
             if (!manageSrc) {
                 const fs = require('fs');
                 manageSrc = fs.readFileSync(`${__dirname}/static/administration.html`).toString();
@@ -48,7 +79,10 @@ const administrationExpressApp = (app, path = '/administrationApi', options) => 
                 const qrcodeJs = fs.readFileSync(`${__dirname}/static/qrcode.min.js`).toString();
                 const cryptoJs = fs.readFileSync(`${__dirname}/static/crypto.min.js`).toString();
                 const clientJs = fs.readFileSync(`${__dirname}/client.js`).toString();
-                const js = xtermJS + fitJS + administrationJs.replace('client.js();', clientJs)
+                const js = xtermJS + fitJS + administrationJs
+                    .replace('ws.url()', wsUrl)
+                    .replace('web.url()', webUrl)
+                    .replace('client.js();', clientJs)
                     .replace('qrcode.js();', qrcodeJs)
                     .replace('crypto.js();', cryptoJs);
 
@@ -57,9 +91,13 @@ const administrationExpressApp = (app, path = '/administrationApi', options) => 
                 manageSrc = manageSrc.substr(0, s) + xtermCSS + manageSrc.substr(s, i) + `<script>${js}</script>` + manageSrc.substr(i);
             }
             res.type("html");
+            res.setHeader("Cache-Control", `public, max-age=${maxAge}`);
             res.send(manageSrc);
         });
-        app.ws(path, (ws, req) => {
+        app.ws(context, (ws, req, next) => {
+            if (hostname && hostname !== req.headers.host) {
+                return next();
+            }
             const {query} = req;
             const session = createSession({timeout, ws, opened: true});
             let autoClose = !timeout ? null : setTimeout(() => {
@@ -115,35 +153,11 @@ const administrationExpressApp = (app, path = '/administrationApi', options) => 
 };
 
 const extendExpressApp = async (app, options) => {
-    app.use((req, res, next) => {
-        const context = contextForPath(resolveBy(req));
-        if (context) {
-            const {moduleAt} = context;
-            if (moduleAt) {
-                let pathname;
-                try {
-                    pathname = pathOf(req);
-                } catch (e) {
-                    pathname = parsePath(req);
-                }
-                const module = moduleAt(pathname);
-                if (module) {
-                    const method = module[keyOf[req.method]] || module.onRequest;
-                    if (method) {
-                        method(req, res, next);
-                        return;
-                    }
-                }
-            }
-        }
-        next();
-    });
-
     const extendedExpress = {};
     let usingAdmin = false;
-    extendedExpress.useAdministrationApi = path => {
+    extendedExpress.useAdministrationApi = url => {
         if (!usingAdmin) {
-            administrationExpressApp(app, path, options);
+            administrationExpressApp(app, url, options);
             usingAdmin = true;
         }
         return extendedExpress;
@@ -192,16 +206,43 @@ const extendExpressApp = async (app, options) => {
                 if (waiter) {
                     await waiter;
                 }
-                let onFinish;
+                let onFinish = null;
                 waiter = new Promise(resolve => onFinish = resolve);
                 if (options) {
                     await saveFile(contextsJson, JSON.stringify(allOptions, null, 2))
                 }
-                onFinish();
+                if (onFinish) {
+                    onFinish();
+                }
                 waiter = null;
             });
         }
     }
+
+    app.use((req, res, next) => {
+        const context = contextForPath(resolveBy(req));
+        if (context) {
+            const {moduleAt} = context;
+            if (moduleAt) {
+                let pathname;
+                try {
+                    pathname = pathOf(req);
+                } catch (e) {
+                    pathname = parsePath(req);
+                }
+                const module = moduleAt(pathname);
+                if (module) {
+                    const method = module[keyOf[req.method]] || module.onRequest;
+                    if (method) {
+                        method(req, res, next);
+                        return;
+                    }
+                }
+            }
+        }
+        next();
+    });
+
     return extendedExpress;
 };
 
