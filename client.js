@@ -256,6 +256,14 @@ const syncDirs = async (session, message) => {
     session.send('filesInContext', ids);
     const contextsFiles = await message('filesInContext');
     const ignoredFilesByWatcher = {};
+    const canProcessFile = (id, filePath) => {
+        const key = id + filePath;
+        if (ignoredFilesByWatcher[key]) {
+            delete ignoredFilesByWatcher[key];
+            return false;
+        }
+        return true;
+    };
     session.ignoredFilesByWatcher = ignoredFilesByWatcher;
 
     await Promise.all(session.contexts.map(async context => {
@@ -316,13 +324,14 @@ const syncDirs = async (session, message) => {
 
         //watching dir
         context.files = await watchDirAt(id, async ({newFiles, removedFiles}) => {
-            const removedAndNewFiles = [...removedFiles, ...newFiles];
-            for (const filePath of removedAndNewFiles) {
-                const key = id + filePath;
-                if (ignoredFilesByWatcher[key]) {
-                    delete ignoredFilesByWatcher[key];
-                } else {
+            for (const filePath of removedFiles) {
+                if (canProcessFile(id, filePath)) {
                     await session.unloadFile(id, filePath);
+                }
+            }
+            for (const filePath of newFiles) {
+                if (canProcessFile(id, filePath)) {
+                    await session.uploadFile(id, filePath);
                 }
             }
         });
