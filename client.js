@@ -1,5 +1,5 @@
 const {getSshKeyPath, userInfo, privateEncrypt, getPrivateKey, getPublicKey} = require("./security");
-const {getFS, watchDirAt} = require('./fsWatcher');
+const {getFS, watchDirAt, readFile} = require('./fsWatcher');
 const {EventEmitter} = require('./EventEmitter');
 const {createWebSocket} = require('./ws');
 
