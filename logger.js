@@ -12,8 +12,9 @@ function createLogger(relPath, filePath) {
             logs.splice(0, 500);
             stacks.splice(0, 500);
         }
-        const a = p.map(o => typeof o === 'object' && o.message && o.stack && o.stack.length ? (o.logger ? o.stack : modifyStack(o.stack, relPath, filePath, true)) : o)
+        const msg = p.map(o => typeof o === 'object' && o.message && o.stack && o.stack.length ? (o.logger ? o.stack : modifyStack(o.stack, relPath, filePath, true)) : o)
             .join(', ');
+        const a = relPath !== './' ? `${relPath} ${msg}` :  msg;
 
         const t = new Date();
         const _ = i => i < 10 ? "0" + i : i;

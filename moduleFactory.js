@@ -71,7 +71,7 @@ const createModule = async (context, getStaticRequest, filePath, featuresFor, fi
                 onRequest: async (req, res) => {
                     try {
                         logger.clean();
-                        logger.debug(`rendering '${filePath}'`);
+                        logger.debug(`rendering '${filePath}' for '${req.remoteAddress}': ${req.headers['User-Agent']}`);
                         const html = await renderPage(pageType, filePath, compiledPage, file, api, req, res, logger);
                         res.type(`html`);
                         res.send(html);

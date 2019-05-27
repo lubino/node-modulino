@@ -234,11 +234,16 @@ const extendExpressApp = async (app, options) => {
                 if (module) {
                     const method = module[keyOf[req.method]] || module.onRequest;
                     if (method) {
+                        req.remoteAddress = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
                         method(req, res, next);
                         return;
                     }
+                } else {
+                    context.logger.debug(`unknown module for ${req.method} request '${req.url}' ${JSON.stringify(req.headers)}`);
                 }
             }
+        } else {
+            rootLogger.debug(`unknown context for ${req.method} request '${req.url}' ${JSON.stringify(req.headers)}`);
         }
         next();
     });

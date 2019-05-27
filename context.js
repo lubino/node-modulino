@@ -194,6 +194,7 @@ const registerContext = async options => {
     const context = newContext(pathToId(path), path, options);
     const {id} = context;
     context.createLogger = filePath => createLogger(id, filePath);
+    context.logger = createLogger(id, '');
     context.on('unregister', () => {
         if (!context.unregistered) {
             unregisterPath(path);
