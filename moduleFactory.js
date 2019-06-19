@@ -1,11 +1,13 @@
 const {runJS} = require("./runModule");
 const {renderPage, compilePage} = require("./renderPage");
 const {loggerHTML, infoHandler, errHandler} = require("./webHandlers");
+const {getSession} = require("./sessions");
 
-const wrap = (listener, logger) => async (req, res, next) => {
+const wrap = (listener, logger, context) => async (req, res, next) => {
     try {
         logger.clean();
         logger.debug(`received request for '${req.method}'`);
+        req.getSession = (options) => getSession(req, res, context, options);
         const promise = listener(req, res, next);
         if (promise != null) {
             const result = await promise;
@@ -22,32 +24,32 @@ const wrap = (listener, logger) => async (req, res, next) => {
     }
 };
 
-function newListener(filePath, logger, api) {
+function newListener(filePath, logger, api, context) {
     let moduleObject;
     api.onRequest = listener => {
         logger.debug(`listen to requests`);
         if (!moduleObject) moduleObject = {logger};
-        moduleObject.onRequest = wrap(listener, logger)
+        moduleObject.onRequest = wrap(listener, logger, context);
     };
     api.onPost = listener => {
         logger.debug(`listen to 'post' requests`);
         if (!moduleObject) moduleObject = {logger};
-        moduleObject.onPost = wrap(listener, logger)
+        moduleObject.onPost = wrap(listener, logger, context);
     };
     api.onGet = listener => {
         logger.debug(`listen to 'get' requests`);
         if (!moduleObject) moduleObject = {logger};
-        moduleObject.onGet = wrap(listener, logger)
+        moduleObject.onGet = wrap(listener, logger, context);
     };
     api.onPut = listener => {
         logger.debug(`listen to 'put' requests`);
         if (!moduleObject) moduleObject = {logger};
-        moduleObject.onPut = wrap(listener, logger)
+        moduleObject.onPut = wrap(listener, logger, context);
     };
     api.onDelete = listener => {
         logger.debug(`listen to 'delete' requests`);
         if (!moduleObject) moduleObject = {logger};
-        moduleObject.onDelete = wrap(listener, logger)
+        moduleObject.onDelete = wrap(listener, logger, context);
     };
     return () => moduleObject;
 
@@ -83,7 +85,7 @@ const createModule = async (context, getStaticRequest, filePath, featuresFor, fi
             });
         } else if (isJsModule) {
             try {
-                const getModuleObject = newListener(filePath, logger, api);
+                const getModuleObject = newListener(filePath, logger, api, context);
                 const errors = runJS(filePath, api, file);
                 errors.length && logger.error(`module '${filePath}' contains ${errors.length} error(s):\n${logger.join(errors)}`);
                 const moduleObject = getModuleObject();

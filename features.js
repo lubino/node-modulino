@@ -35,11 +35,33 @@ const plainJSON = (o, l = 20, all = []) => {
 };
 
 
-const mailer = (logger, service, auth) => {
-    const key = JSON.stringify({service, auth});
+const mailer = (logger, context, serviceKey, authentication) => {
+    let key;
+    if (!authentication || !serviceKey) {
+        key = serviceKey || "default";
+    } else {
+        key = JSON.stringify({s: serviceKey, a: authentication});
+    }
     let transporter = transporters[key];
     if (!transporter) {
-        if (!nodemailer) nodemailer = require('nodemailer');
+        if (!nodemailer) {
+            nodemailer = require('nodemailer');
+        }
+        let service;
+        let auth;
+        if (!authentication) {
+            const config = (serviceKey ? context.email[serviceKey] : context.email) || {};
+            service = config.service || serviceKey;
+            auth = config.auth;
+        } else {
+            service = serviceKey;
+            auth = authentication;
+        }
+
+        if (!service && !authentication) {
+            throw new Error('Mailer transporter is not configured.');
+        }
+
         transporters[key] = transporter = nodemailer.createTransport({service, auth});
     }
     return transporter;
@@ -95,7 +117,7 @@ function featuresForContext(context) {
             storage: (name, value) => storage(logger, name, value),
             save: async () => await storage.save(logger),
             sharedStorage: (name, value) => sharedStorage(logger, name, value),
-            mailer: (service, auth) => mailer(logger, service, auth),
+            mailer: (service, auth) => mailer(logger, context, service, auth),
             module: path => module(logger, path),
             storeContent,
             contentOf,
@@ -106,7 +128,7 @@ function featuresForContext(context) {
             },
             require: path => {
                 logger.debug(`loading module '${path}'`);
-                if (path === 'api') return api;
+                if (path === 'api' || path === 'modulino/api') return api;
                 if (path === 'fs') throw new api.Error(`'${path}' is forbidden (security concerns)`);
                 if (path.startsWith('../') || path.includes('/../')) throw new api.Error(`path contains '../' use only absolute paths`);
                 if (path.startsWith('./')) path = context.path + path.substr(1);

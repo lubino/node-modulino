@@ -1,4 +1,4 @@
-const {getContexts, contextFor, registerContext} = require("./context");
+const {getContexts, modifyContext, contextFor, registerContext} = require("./context");
 const {user, getUsers, addUser, publicKeysByEmail, logUser, sshUser} = require("./users");
 const {rootLogger} = require('./logger');
 const {asyncRequire} = require('./installer');
@@ -96,6 +96,10 @@ const methods = {
         }
         session.administrationEmitter('userNotAuthenticated', {sessionId: session.id, username, email});
         throw new Error('401');
+    },
+    context: (session, data) => {
+        const {id, options} = data || {};
+        return {context: modifyContext(id, options)};
     },
     contexts: (session) => {
         return {contexts: getContexts()}

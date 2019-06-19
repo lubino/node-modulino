@@ -24,9 +24,7 @@ function removeTree(changePath, path, subTree, name) {
 const fsStat = async (changePath, dirPath, path, files, name, watchers) => {
     const subPath = path + "/" + name;
     try {
-        const stats = await new Promise((resolve, reject) => {
-            getFS().stat(dirPath + subPath, (err, stats) => err ? reject(err) : resolve(stats))
-        });
+        const stats = await fsStats(dirPath + subPath);
         if (stats.isDirectory()) {
             changePath(subPath, "cd");
             const newTree = {};
@@ -42,6 +40,39 @@ const fsStat = async (changePath, dirPath, path, files, name, watchers) => {
         removeTree(changePath, subPath, files, name);
     }
 };
+
+const fsStats = (dirPath) => new Promise((resolve, reject) => {
+    getFS().stat(dirPath, (err, stats) => err ? reject(err) : resolve(stats));
+});
+
+const checkDir = async (dirPath) => {
+    try {
+        const stats = await fsStats(dirPath);
+        return stats.isDirectory();
+    } catch (e) {
+        if (e.code === "ENOENT") {
+            return await mkDir(dirPath);
+        }
+    }
+};
+const mkDir = (dirPath) => new Promise((resolve, reject) => {
+    getFS().mkdir(dirPath, (err) => {
+        if (err && err.code === 'ENOENT') {
+            const parent = dirPath.substr(0, dirPath.lastIndexOf('/'));
+            if (parent) {
+                mkDir(parent).then(() => {
+                    mkDir(dirPath).then(resolve).catch(reject);
+                }).catch(reject);
+            } else {
+                reject(err);
+            }
+        } else if (err) {
+            reject(err);
+        } else {
+            resolve(true);
+        }
+    })
+});
 
 const watchDir = async (changePath, dirPath, path = '', files, watchers) => {
     const items = await new Promise((resolve, reject) => {
@@ -110,7 +141,9 @@ const forChangeListener = listener => {
 const watchDirAt = async (dirPath, changeListener) => {
     const files = {};
     const watchers = [];
-    await watchDir(forChangeListener(changeListener), dirPath, '', files, watchers);
+    if (await checkDir(dirPath)) {
+        await watchDir(forChangeListener(changeListener), dirPath, '', files, watchers);
+    }
     return files;
 };
 

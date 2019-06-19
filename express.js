@@ -124,9 +124,11 @@ const administrationExpressApp = (app, url = '/administrationApi', options) => {
                 setListener(item => setImmediate(() => logListeners.map(listener => listener(item))));
             }
             ws.on('message', data => {
-                if (data === 'ping') return;
+                if (data === 'ping') {
+                    return;
+                }
                 const newLine = data.indexOf("\n");
-                const methodName = newLine !== -1 ? newLine > 0 ? data.substr(0, newLine) : null : newLine;
+                const methodName = newLine !== -1 ? newLine > 0 ? data.substr(0, newLine) : null : data;
                 let obj = newLine !== -1 ? data.substr(newLine + 1) : undefined;
                 try {
                     obj = obj ? JSON.parse(obj) : undefined;

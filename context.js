@@ -17,7 +17,7 @@ const pathToId = path => {
             result += c;
         }
     }
-    return result;
+    return result || '_';
 };
 
 let saveAllOptions;
@@ -28,9 +28,11 @@ const saver = save => {
 const saveOptions = (options) => saveAllOptions && saveAllOptions([...contextsOptions], options).catch(e => rootLogger.error(`can not save context: ${e}`, e));
 
 
-const newContext = (id, path, options) => {
+const newContext = (options) => {
     const emitter = new EventEmitter();
-    const context = {id, path};
+    const {path, session = {}, email = {}} = options;
+    const id = pathToId(path);
+    const context = {id, path, session, email};
     context.register = () => {
         const old = contexts[context.path];
         if (old) {
@@ -56,8 +58,49 @@ const newContext = (id, path, options) => {
         }
         return false
     };
+    context.getOptions = () => options;
     context.on = (name, listener) => emitter.on(name, listener);
+    context.emit = (name, data) => emitter.emit(name, data);
     return context;
+};
+
+const contextParams = "session,email".split(',');
+const optionsParams = [...contextParams, ..."headers,url".split(',')];
+const modifyContext = (contextId, options = {}) => {
+    const context = Object.values(contexts).find(({id})=> id === contextId);
+    if (!context) {
+        return {contextId};
+    }
+    const actualOptions = context.getOptions();
+    const oldValues = {};
+    const changedFields = optionsParams.filter(field => {
+        const opt = options[field];
+        if (opt !== undefined) {
+            const value = actualOptions[field];
+            if (opt !== value) {
+                oldValues[field] = value;
+                if (opt == null) {
+                    delete actualOptions[field];
+                } else {
+                    actualOptions[field] = opt;
+                }
+                if (contextParams.includes(field)) {
+                    context[field] = opt == null ? {} : opt;
+                }
+                return true;
+            }
+        }
+        return false;
+    });
+    if (changedFields.includes('headers') || changedFields.includes('url')) {
+        unregisterPath(actualOptions.path);
+        registerPath(actualOptions);
+    }
+    if (changedFields.length) {
+        saveOptions(actualOptions);
+        context.emit('modify', changedFields);
+    }
+    return {contextId, options: actualOptions};
 };
 
 const contextFor = contextId => Object.values(contexts).find(({id})=> id === contextId);
@@ -134,7 +177,8 @@ const unregisterPath = (path) => {
     }
 
 };
-const registerPath = (path, headers, url) => {
+const urlStartsWith = (fullUrl, url) => fullUrl.startsWith(url+'/');
+const registerPath = ({path, headers, url = ""}) => {
     let pathResolver;
     if (headers) {
         const entries = Object.entries(headers);
@@ -143,9 +187,9 @@ const registerPath = (path, headers, url) => {
             const [name, value] = first;
             if (url) {
                 if (Array.isArray(value)) {
-                    pathResolver = ({headers, originalUrl}) => originalUrl.startsWith(url) && value.includes(headers[name]);
+                    pathResolver = ({headers, originalUrl}) => urlStartsWith(originalUrl, url) && value.includes(headers[name]);
                 } else {
-                    pathResolver = ({headers, originalUrl}) => originalUrl.startsWith(url) && value === headers[name];
+                    pathResolver = ({headers, originalUrl}) => urlStartsWith(originalUrl, url) && value === headers[name];
                 }
             } else {
                 if (Array.isArray(value)) {
@@ -162,13 +206,13 @@ const registerPath = (path, headers, url) => {
                 return headers => headers[name] !== value;
             });
             if (url) {
-                pathResolver = ({headers, originalUrl}) => originalUrl.startsWith(url) && !ignore.find(i => i(headers));
+                pathResolver = ({headers, originalUrl}) => urlStartsWith(originalUrl, url) && !ignore.find(i => i(headers));
             } else {
                 pathResolver = ({headers}) => !ignore.find(i => i(headers));
             }
         }
     } else if (url) {
-        pathResolver = ({originalUrl}) => originalUrl.startsWith(url);
+        pathResolver = ({originalUrl}) => urlStartsWith(originalUrl, url);
     } else {
         defaultPath = path;
     }
@@ -189,9 +233,9 @@ const getServerStatic = () => {
 
 const registerContext = async options => {
     if (!options) return;
-    const {path, headers, url = ""} = options;
+    const {path} = options;
     if (!path) return;
-    const context = newContext(pathToId(path), path, options);
+    const context = newContext(options);
     const {id} = context;
     context.createLogger = filePath => createLogger(id, filePath);
     context.logger = createLogger(id, '');
@@ -204,7 +248,7 @@ const registerContext = async options => {
     });
     context.on('register', () => {
         if (!context.registered) {
-            registerPath(path, headers, url);
+            registerPath(options);
             context.registered = true;
         }
     });
@@ -218,19 +262,25 @@ const registerContext = async options => {
     const getStaticRequest = () => {
         if (!staticRequest) {
             const serverStatic = getServerStatic()(path);
-            if (url) {
-                const {length} = url;
-                staticRequest = (req, res, next) => {
+            staticRequest = (req, res, next) => {
+                const length = options.url ? options.url.length : 0;
+                if (length) {
                     const url = req.url.substr(length);
                     serverStatic({...req, url}, res, next);
-                };
-            } else {
-                staticRequest = serverStatic;
-
-            }
+                } else {
+                    serverStatic(req, res, next);
+                }
+            };
         }
         return staticRequest;
     };
+
+    context.on('modify', (changedFields) => {
+        if (changedFields.includes('url')) {
+            createContextModuleFinder(context, module, options);
+        }
+    });
+
 
     context.files = await watchDirAt(path, data => {
         const {newFiles, removedFiles} = data;
@@ -246,15 +296,19 @@ const registerContext = async options => {
         });
         if (fileListeners.length) fileListeners.map(listener => listener({id, newFiles, removedFiles}));
     });
+    createContextModuleFinder(context, module, options);
+    context.register();
+    return context;
+};
+
+const createContextModuleFinder = (context, module, options) => {
+    const {url} = options;
     if (url) {
         const {length} = url;
         context.moduleAt = urlPath => module(urlPath.substr(length));
     } else {
         context.moduleAt = urlPath => module(urlPath);
     }
-    context.register();
-    return context;
 };
 
-
-module.exports = {contextFor, contextForPath, getContexts, registerContext, resolveBy, addFileListener, removeFileListener, saver};
+module.exports = {newContext, modifyContext, contextFor, contextForPath, getContexts, registerContext, resolveBy, addFileListener, removeFileListener, saver};

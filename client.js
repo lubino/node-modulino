@@ -38,6 +38,13 @@ const createMethods = session => ({
     newContext: ({id, files}) => {
         console.log(`context '${id}' created, contains: ${Object.keys(files).join(', ')}`);
     },
+    context: ({contextId, options}) => {
+        if (options) {
+            console.log(`context '${contextId}' has options: ${JSON.stringify(options)}`);
+        } else {
+            console.log(`context '${contextId}' not found`);
+        }
+    },
     fileNotStored: async ({contextId, filePath, message}) => {
         console.log(`error storing file on server '${contextId}${filePath}': ${message}`)
     },
