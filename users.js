@@ -60,7 +60,7 @@ const userShhKeys = async (username, email) => {
     return keys;
 };
 
-const user = ({username, email}) => cloneUser(getUser(username, email));
+const user = (username, email) => cloneUser(getUser(username, email));
 
 const publicKeysByEmail = async (username, email) => {
     const keys = await userShhKeys(username, email);

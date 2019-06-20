@@ -21,14 +21,19 @@ const createMethods = session => ({
     },
     change: async data => {
         const {id, newFiles, removedFiles} = data;
+        const {ignoredFilesByWatcher} = session;
         for (const filePath of newFiles) {
             const path = id + filePath;
-            session.ignoredFilesByWatcher[path] = true;
+            if (ignoredFilesByWatcher) {
+                ignoredFilesByWatcher[path] = true;
+            }
             await session.downloadFile(id, filePath);
         }
         for (const filePath of removedFiles) {
             const path = id + filePath;
-            session.ignoredFilesByWatcher[path] = true;
+            if (ignoredFilesByWatcher) {
+                ignoredFilesByWatcher[path] = true;
+            }
             await rmFile(path);
         }
     },

@@ -1,10 +1,9 @@
-const {contextForPath, registerContext, resolveBy, addFileListener, removeFileListener, saver: contextSaver} = require('./context');
-const {createSession, destroySession, sessionStarted, onMessage} = require("./administration");
-const {setListener, logToConsole, rootLogger} = require("./logger");
+const {contextForPath, registerContext, resolveBy, saver: contextSaver} = require('./context');
+const {setParameters} = require("./administration");
+const {logToConsole, rootLogger} = require("./logger");
 const {readFile, saveFile} = require('./fsWatcher');
 const {addUser, saver: usersSaver} = require('./users');
-
-const maxAge = 30*86400; // 30 days
+const {} = require('./api');
 
 const pathOf = req => req._parsedUrl.pathname;
 const parsePath = req => {
@@ -28,12 +27,12 @@ const parseUrl = url => {
     const protocol = protocolIndex > 0 ? url.substr(0, protocolIndex + 1).toLowerCase() : undefined;
     const rest = protocolIndex >= 0 ? url.substr(protocolIndex+3) : url;
     const contextIndex = rest.indexOf('/');
-    const hostname = contextIndex >= 0 ? contextIndex > 0 ? rest.substr(0, contextIndex).toLowerCase() : undefined : rest;
+    const host = contextIndex >= 0 ? contextIndex > 0 ? rest.substr(0, contextIndex).toLowerCase() : undefined : rest;
     const context = contextIndex >= 0 ? rest.substr(contextIndex) : '/';
     let wsUrl;
     let webUrl;
-    if (hostname) {
-        const urlWithoutProtocol = `//${hostname}${context}`;
+    if (host) {
+        const urlWithoutProtocol = `//${host}${context}`;
         if (protocol) {
             wsUrl = `"${protocol === 'https:' ? 'wss:' : 'ws:'}${urlWithoutProtocol}"`;
             webUrl = `"${protocol}${urlWithoutProtocol}"`;
@@ -45,113 +44,23 @@ const parseUrl = url => {
         wsUrl = `(location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + "${context}"`;
         webUrl = `location.protocol + "//" + location.host + "${context}"`;
     }
-    return {wsUrl, webUrl, hostname, context};
+    return {wsUrl, webUrl, host, context};
 };
 
-let administrationEmitter;
-const administrationExpressApp = (app, url = '/administrationApi', options) => {
-    const logListeners = [];
-    const {timeout = 60000} = options;
-    if (app.ws) {
-        if (!administrationEmitter) {
-            const listeners = [];
-            administrationEmitter = (name, data) => {
-                for (const listener of listeners) {
-                    listener(name, data);
-                }
-            };
-            administrationEmitter.add = listener => listeners.push(listener);
-            administrationEmitter.remove = listener => listeners.splice(listeners.indexOf(listener), 1).length === 1;
-        }
-        let manageSrc;
-        const {wsUrl, webUrl, hostname, context} = parseUrl(url);
-        app.get(context, (req, res, next) => {
-            if (hostname && hostname !== req.headers.host) {
-                return next();
-            }
-            if (!manageSrc) {
-                const fs = require('fs');
-                manageSrc = fs.readFileSync(`${__dirname}/static/administration.html`).toString();
-                const xtermJS = fs.readFileSync(`${__dirname}/static/xterm.min.js`).toString();
-                const fitJS = fs.readFileSync(`${__dirname}/static/fit.min.js`).toString();
-                const xtermCSS = fs.readFileSync(`${__dirname}/static/xterm.min.css`).toString();
-                const administrationJs = fs.readFileSync(`${__dirname}/static/main.js`).toString();
-                const qrcodeJs = fs.readFileSync(`${__dirname}/static/qrcode.min.js`).toString();
-                const cryptoJs = fs.readFileSync(`${__dirname}/static/crypto.min.js`).toString();
-                const clientJs = fs.readFileSync(`${__dirname}/client.js`).toString();
-                const js = xtermJS + fitJS + administrationJs
-                    .replace('ws.url()', wsUrl)
-                    .replace('web.url()', webUrl)
-                    .replace('client.js();', clientJs)
-                    .replace('qrcode.js();', qrcodeJs)
-                    .replace('crypto.js();', cryptoJs);
-
-                const s = manageSrc.indexOf('</style>');
-                const i = manageSrc.indexOf('</body');
-                manageSrc = manageSrc.substr(0, s) + xtermCSS + manageSrc.substr(s, i) + `<script>${js}</script>` + manageSrc.substr(i);
-            }
-            res.type("html");
-            res.setHeader("Cache-Control", `public, max-age=${maxAge}`);
-            res.send(manageSrc);
-        });
-        app.ws(context, (ws, req, next) => {
-            if (hostname && hostname !== req.headers.host) {
-                return next();
-            }
-            const {query} = req;
-            const session = createSession({timeout, ws, opened: true});
-            let autoClose = !timeout ? null : setTimeout(() => {
-                autoClose = null;
-                if (!session.authenticated) {
-                    destroySession(session);
-                }
-            }, timeout);
-            session.administrationEmitter = administrationEmitter;
-            session.send = (name, data) => {
-                try {
-                    session.opened && ws.send(name + "\n" + JSON.stringify(data));
-                } catch (e) {
-                    rootLogger.error(e);
-                }
-            };
-            const administrationListener = (name, data) => session.authenticated && session.send("administration", {name, data});
-            administrationEmitter.add(administrationListener);
-            const logListener = data => session.authenticated && session.send("log", data);
-            const fileListener = data => session.authenticated && session.send("change", data);
-            logListeners.push(logListener);
-            addFileListener(fileListener);
-            if (logListeners.length === 1) {
-                setListener(item => setImmediate(() => logListeners.map(listener => listener(item))));
-            }
-            ws.on('message', data => {
-                if (data === 'ping') {
-                    return;
-                }
-                const newLine = data.indexOf("\n");
-                const methodName = newLine !== -1 ? newLine > 0 ? data.substr(0, newLine) : null : data;
-                let obj = newLine !== -1 ? data.substr(newLine + 1) : undefined;
-                try {
-                    obj = obj ? JSON.parse(obj) : undefined;
-                } catch (e) {
-                    //safe to ignore
-                }
-                onMessage(session, methodName, obj);
-            });
-            ws.on('close', () => {
-                clearTimeout(autoClose);
-                administrationEmitter.remove(administrationListener);
-                session.opened = false;
-                destroySession(session);
-                logListeners.splice(logListeners.indexOf(logListener), 1);
-                if (logListeners.length === 0) {
-                    setListener(null)
-                }
-                removeFileListener(fileListener);
-            });
-            sessionStarted(session, query);
-        });
+const administrationExpressApp = (app, url = '/administrationApi', {timeout} = {}) => {
+    const {wsUrl, webUrl, host, context} = parseUrl(url);
+    const rootDir = `${__dirname}`;
+    const options = {path: `${rootDir}/administrationApi`};
+    if (host) {
+        options.headers = {host};
+    }
+    if (context.length > 1) {
+        options.url = context;
     }
 
+    setParameters({wsUrl, webUrl, host, url: context, timeout});
+
+    registerContext(options, {allowAdministration: true}).catch(e => rootLogger.error(`can not add administration context: ${e}`));
 };
 
 const extendExpressApp = async (app, options) => {

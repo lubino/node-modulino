@@ -12,10 +12,10 @@ const execute = command => {
 };
 
 const installNpm = async (logger, name) => {
-    logger.debug(`installing ${name}`);
+    logger.debug(`installing '${name}'`);
     const {stdout, stderr} = await execute(`npm i ${name}`);
-    logger.debug(`${name} installation finished: ${JSON.stringify({stdout, stderr})}`);
-    if (!stdout.includes(`+ ${name}@`)) {
+    logger.debug(`installation of '${name}' finished: \n${stdout}${stderr ? stderr+'\n\n' : ''}`);
+    if (!stdout.includes(`${name}@`)) {
         throw new Error(`${name} module not available, run 'npm i ${name}' to install it`)
     }
 };

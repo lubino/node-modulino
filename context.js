@@ -28,11 +28,11 @@ const saver = save => {
 const saveOptions = (options) => saveAllOptions && saveAllOptions([...contextsOptions], options).catch(e => rootLogger.error(`can not save context: ${e}`, e));
 
 
-const newContext = (options) => {
+const newContext = (options, allowAdministration = false) => {
     const emitter = new EventEmitter();
     const {path, session = {}, email = {}} = options;
-    const id = pathToId(path);
-    const context = {id, path, session, email};
+    const id = allowAdministration ? 'administrationApi' : pathToId(path);
+    const context = {id, path, session, email, allowAdministration};
     context.register = () => {
         const old = contexts[context.path];
         if (old) {
@@ -231,11 +231,11 @@ const getServerStatic = () => {
     return serveStatic;
 };
 
-const registerContext = async options => {
+const registerContext = async (options, {allowAdministration} = {}) => {
     if (!options) return;
     const {path} = options;
     if (!path) return;
-    const context = newContext(options);
+    const context = newContext(options, allowAdministration);
     const {id} = context;
     context.createLogger = filePath => createLogger(id, filePath);
     context.logger = createLogger(id, '');
@@ -311,4 +311,4 @@ const createContextModuleFinder = (context, module, options) => {
     }
 };
 
-module.exports = {newContext, modifyContext, contextFor, contextForPath, getContexts, registerContext, resolveBy, addFileListener, removeFileListener, saver};
+module.exports = {getServerStatic, newContext, modifyContext, contextFor, contextForPath, getContexts, registerContext, resolveBy, addFileListener, removeFileListener, saver};

@@ -129,7 +129,8 @@ function featuresForContext(context) {
             require: path => {
                 logger.debug(`loading module '${path}'`);
                 if (path === 'api' || path === 'modulino/api') return api;
-                if (path === 'fs') throw new api.Error(`'${path}' is forbidden (security concerns)`);
+                if (path === 'modulino/administration' && context.allowAdministration) return require('./administration');
+                if (path === 'fs' && !context.allowAdministration) throw new api.Error(`'${path}' is forbidden (security concerns)`);
                 if (path.startsWith('../') || path.includes('/../')) throw new api.Error(`path contains '../' use only absolute paths`);
                 if (path.startsWith('./')) path = context.path + path.substr(1);
                 else if (path.startsWith('/')) path = context.path + path;
