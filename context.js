@@ -36,10 +36,16 @@ const newContext = (options, allowAdministration = false) => {
     context.register = () => {
         const old = contexts[context.path];
         if (old) {
-            old.unregister();
+            if (!old.allowAdministration) {
+                old.unregister();
+            } else {
+                throw new Error(`Administration context can not be unregistered`);
+            }
         }
         rootLogger.info(`creating context '${id}' at '${path}'`);
-        contextsOptions.push(options);
+        if (!allowAdministration) {
+            contextsOptions.push(options);
+        }
         saveOptions(options);
         emitter.emit('register', options);
         contexts[context.path] = context;
@@ -48,10 +54,12 @@ const newContext = (options, allowAdministration = false) => {
         if (contexts[context.path] === context) {
             rootLogger.info(`removing context '${id}' at '${path}'`);
             emitter.emit('unregister');
-            const i = contextsOptions.indexOf(options);
-            if (i >= 0) {
-                contextsOptions.splice(i, 1);
-                saveOptions(options);
+            if (!allowAdministration) {
+                const i = contextsOptions.indexOf(options);
+                if (i >= 0) {
+                    contextsOptions.splice(i, 1);
+                    saveOptions(options);
+                }
             }
             delete contexts[context.path];
             return true;
