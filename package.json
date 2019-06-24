@@ -3,7 +3,9 @@
   "version": "1.0.15",
   "description": "Simple NodeJS Application Server",
   "main": "modulino.js",
-  "scripts": {},
+  "scripts": {
+    "test": "echo nothing to test"
+  },
   "author": "Lubos Strapko",
   "license": "MIT",
   "peerDependencies": {},
