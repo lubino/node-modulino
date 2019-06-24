@@ -45,7 +45,9 @@ const mailer = (logger, context, serviceKey, authentication) => {
     let transporter = transporters[key];
     if (!transporter) {
         if (!nodemailer) {
-            nodemailer = require('nodemailer');
+            asyncRequire(logger, 'nodemailer').then(result => nodemailer = result);
+            //TODO return fake transporter to send email later
+            throw new Error('Service is not installed.');
         }
         let service;
         let auth;
@@ -78,14 +80,17 @@ const sharedStorage = (logger, name, value = {}) => {
 };
 
 function featuresForContext(context) {
-    const modules = modulesForContext(context);
-    const module = (() => {
-        const {module} = modules;
-        return (logger, path) => {
-            logger.debug(`loading module '${path}'`);
-            return module(path)
+    const {module} = modulesForContext(context);
+    const moduleFor = (logger, path) => {
+        logger.debug(`loading module '${path}'`);
+        const actual = module(path);
+        if (!actual) {
+            const newOne = {};
+            module(path, newOne);
+            return newOne;
         }
-    })();
+        return actual
+    };
 
     if (!context.storage) {
         context.storage = {};
@@ -112,13 +117,13 @@ function featuresForContext(context) {
             });
     });
 
-    const featuresFor = logger => {
+    const featuresFor = (logger, filePath) => {
         const api = {
             storage: (name, value) => storage(logger, name, value),
             save: async () => await storage.save(logger),
             sharedStorage: (name, value) => sharedStorage(logger, name, value),
             mailer: (service, auth) => mailer(logger, context, service, auth),
-            module: path => module(logger, path),
+            module: path => moduleFor(logger, path),
             storeContent,
             contentOf,
             plainJSON: plainJSON,
@@ -131,9 +136,10 @@ function featuresForContext(context) {
                 if (path === 'api' || path === 'modulino/api') return api;
                 if (path === 'modulino/administration' && context.allowAdministration) return require('./administration');
                 if (path === 'fs' && !context.allowAdministration) throw new api.Error(`'${path}' is forbidden (security concerns)`);
-                if (path.startsWith('../') || path.includes('/../')) throw new api.Error(`path contains '../' use only absolute paths`);
-                if (path.startsWith('./')) path = context.path + path.substr(1);
-                else if (path.startsWith('/')) path = context.path + path;
+                if (path.startsWith('../')) path = joinPath(filePath, path);
+                if (path.includes('/../')) throw new api.Error(`path contains '/../' use only absolute paths`);
+                if (path.startsWith('./')) path = absolute(context.path) + filePath.substr(0, filePath.lastIndexOf('/')) + path.substr(1);
+                else if (path.startsWith('/')) path = absolute(context.path) + path;
                 else if (path.includes('/')) new api.Error(`path contains forbidden symbol '/' (security concerns)`);
                 try {
                     return require(path)
@@ -146,7 +152,21 @@ function featuresForContext(context) {
         return api;
     };
 
-    return {storage, mailer, module, sharedStorage, storeContent, contentOf, plainJSON, featuresFor}
+    return {storage, mailer, module: moduleFor, sharedStorage, storeContent, contentOf, plainJSON, featuresFor}
 }
+
+const absolute = path => path.startsWith('/') ? path : process.cwd() + '/' + path;
+const joinPath = (filePath, path) => {
+    let i = 0;
+    while (path.startsWith('../', i*3)) {
+        i++;
+    }
+    const end = path.substr(i*3);
+    let p = filePath;
+    while (i-->=0) {
+        p = p.substr(0, p.lastIndexOf('/'));
+    }
+    return p + "/" + end;
+};
 
 module.exports = {featuresForContext};

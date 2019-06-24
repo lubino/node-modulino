@@ -142,7 +142,7 @@ const extendExpressApp = async (app, options) => {
                     pathname = parsePath(req);
                 }
                 const module = moduleAt(pathname);
-                if (module) {
+                if (module && !module.isPrivate) {
                     const method = module[keyOf[req.method]] || module.onRequest;
                     if (method) {
                         req.remoteAddress = req.headers['x-forwarded-for'] || req.connection.remoteAddress;

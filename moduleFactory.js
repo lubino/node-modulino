@@ -24,6 +24,12 @@ const wrap = (listener, logger, context) => async (req, res, next) => {
     }
 };
 
+const exp = (moduleObject, data) => {
+    for (const [field, value] of Object.entries(data)) {
+        moduleObject[field] = value;
+    }
+};
+
 function newListener(filePath, logger, api, context) {
     let moduleObject;
     api.onRequest = listener => {
@@ -51,22 +57,25 @@ function newListener(filePath, logger, api, context) {
         if (!moduleObject) moduleObject = {logger};
         moduleObject.onDelete = wrap(listener, logger, context);
     };
+    api.exports = data => exp(moduleObject, data);
+
     return () => moduleObject;
 
 }
 
 const createModule = async (context, getStaticRequest, filePath, featuresFor, fileType, register) => {
     const logger = context.createLogger(filePath);
+    const isPrivate = filePath.startsWith('/.private/') || filePath.startsWith('/private/');
     const {isJsModule, pageType} = fileType;
     if (!pageType && !isJsModule) {
-        register({onRequest: getStaticRequest()});
+        register({onRequest: getStaticRequest(), isPrivate});
         return
     }
     try {
         const data = await context.contentOf(filePath);
         const file = data.toString();
         logger.debug(`processing file '${filePath}'`);
-        const api = featuresFor(logger);
+        const api = featuresFor(logger, filePath);
         if (pageType) {
             const compiledPage = await compilePage(pageType, filePath, file, api, logger);
             register({
@@ -81,7 +90,7 @@ const createModule = async (context, getStaticRequest, filePath, featuresFor, fi
                         logger.error(e);
                         errHandler(logger)(req, res);
                     }
-                }
+                }, isPrivate
             });
         } else if (isJsModule) {
             try {
@@ -89,20 +98,24 @@ const createModule = async (context, getStaticRequest, filePath, featuresFor, fi
                 const errors = runJS(filePath, api, file);
                 errors.length && logger.error(`module '${filePath}' contains ${errors.length} error(s):\n${logger.join(errors)}`);
                 const moduleObject = getModuleObject();
-                if (moduleObject) register(moduleObject);
-                else register({onRequest: infoHandler(filePath, () => loggerHTML(logger))});
+                if (moduleObject) {
+                    moduleObject.isPrivate = isPrivate;
+                    register(moduleObject);
+                } else {
+                    register({onRequest: infoHandler(filePath, () => loggerHTML(logger)), isPrivate});
+                }
 
             } catch (e) {
                 logger.error(e);
-                register({onRequest: errHandler(logger)});
+                register({onRequest: errHandler(logger), isPrivate});
             }
         } else {
             logger.error(`unsupported module '${filePath}'`);
-            register({onRequest: errHandler(logger)});
+            register({onRequest: errHandler(logger), isPrivate});
         }
     } catch (e) {
         logger.error(e);
-        register({onRequest: errHandler(logger)});
+        register({onRequest: errHandler(logger), isPrivate});
     }
 };
 

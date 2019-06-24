@@ -4,4 +4,4 @@ const {apiContext} = require('./apiContext');
 
 const logger = createLogger(apiContext.id, apiContext.path);
 
-module.exports = featuresForContext(apiContext).featuresFor(logger);
+module.exports = featuresForContext(apiContext).featuresFor(logger, '');
