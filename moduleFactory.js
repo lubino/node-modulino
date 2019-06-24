@@ -57,7 +57,10 @@ function newListener(filePath, logger, api, context) {
         if (!moduleObject) moduleObject = {logger};
         moduleObject.onDelete = wrap(listener, logger, context);
     };
-    api.exports = data => exp(moduleObject, data);
+    api.exports = data => {
+        if (!moduleObject) moduleObject = {logger};
+        exp(moduleObject, data);
+    };
 
     return () => moduleObject;
 

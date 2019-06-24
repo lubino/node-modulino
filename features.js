@@ -1,5 +1,6 @@
-const {modulesForContext} = require('./module');
 const fs = require('fs');
+const {modulesForContext} = require('./module');
+const {asyncRequire} = require("./installer");
 
 const transporters = {};
 let nodemailer;
