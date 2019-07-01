@@ -76,15 +76,15 @@ const config = {
 
 const linter = new Linter();
 
-const err = ({message, line, column}) => ({message, stack: message+`\n    at ESLint.validate (eval at), <anonymous>:${line}:${column})`});
+const err = (file, {message, line, column}) => ({message, stack: message+`\n    at ESLint.validate (${file}:${line}:${column})`});
 
 module.exports = {
-    validate: (logger, js, filePath) => {
+    validate: (context, logger, js, filePath) => {
         const messages = linter.verify(js, config, filePath);
         const fatal = messages.find(({fatal}) => fatal);
         if (fatal) {
-            throw err(fatal)
+            throw err(context.id+filePath, fatal)
         }
-        return messages.map(item => err(item));
+        return messages.map(item => err(context.id+filePath, item));
     }
 };

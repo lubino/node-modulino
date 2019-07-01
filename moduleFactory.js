@@ -32,28 +32,37 @@ const exp = (moduleObject, data) => {
 
 function newListener(filePath, logger, api, context) {
     let moduleObject;
+    let types = [];
     api.onRequest = listener => {
-        logger.debug(`listen to requests`);
+        types = null;
         if (!moduleObject) moduleObject = {logger};
         moduleObject.onRequest = wrap(listener, logger, context);
     };
     api.onPost = listener => {
-        logger.debug(`listen to 'post' requests`);
+        if (types) {
+            types.push('post');
+        }
         if (!moduleObject) moduleObject = {logger};
         moduleObject.onPost = wrap(listener, logger, context);
     };
     api.onGet = listener => {
-        logger.debug(`listen to 'get' requests`);
+        if (types) {
+            types.push('get');
+        }
         if (!moduleObject) moduleObject = {logger};
         moduleObject.onGet = wrap(listener, logger, context);
     };
     api.onPut = listener => {
-        logger.debug(`listen to 'put' requests`);
+        if (types) {
+            types.push('put');
+        }
         if (!moduleObject) moduleObject = {logger};
         moduleObject.onPut = wrap(listener, logger, context);
     };
     api.onDelete = listener => {
-        logger.debug(`listen to 'delete' requests`);
+        if (types) {
+            types.push('delete');
+        }
         if (!moduleObject) moduleObject = {logger};
         moduleObject.onDelete = wrap(listener, logger, context);
     };
@@ -62,7 +71,18 @@ function newListener(filePath, logger, api, context) {
         exp(moduleObject, data);
     };
 
-    return () => moduleObject;
+    return () => {
+        let info;
+        if (types === null) {
+            info = `listens to all requests`;
+        } else if (types.length) {
+            types.sort();
+            info = `listens to ${types.join(', ')} request(s)`;
+        } else {
+            info = `doesn't listen to any requests`;
+        }
+        return {moduleObject, info};
+    }
 
 }
 
@@ -71,7 +91,7 @@ const createModule = async (context, getStaticRequest, filePath, featuresFor, fi
     const isPrivate = filePath.startsWith('/.private/') || filePath.startsWith('/private/');
     const {isJsModule, pageType} = fileType;
     if (!pageType && !isJsModule) {
-        register({onRequest: getStaticRequest(), isPrivate});
+        register(logger, {onRequest: getStaticRequest(), isPrivate}, 'responds with static context');
         return
     }
     try {
@@ -80,8 +100,8 @@ const createModule = async (context, getStaticRequest, filePath, featuresFor, fi
         logger.debug(`processing file '${filePath}'`);
         const api = featuresFor(logger, filePath);
         if (pageType) {
-            const compiledPage = await compilePage(pageType, filePath, file, api, logger);
-            register({
+            const compiledPage = await compilePage(context, pageType, filePath, file, api, logger);
+            register(logger, {
                 onRequest: async (req, res) => {
                     try {
                         logger.clean();
@@ -94,31 +114,33 @@ const createModule = async (context, getStaticRequest, filePath, featuresFor, fi
                         errHandler(logger)(req, res);
                     }
                 }, isPrivate
-            });
+            }, `renders '${pageType}' page`);
         } else if (isJsModule) {
             try {
                 const getModuleObject = newListener(filePath, logger, api, context);
-                const errors = runJS(filePath, api, file);
-                errors.length && logger.error(`module '${filePath}' contains ${errors.length} error(s):\n${logger.join(errors)}`);
-                const moduleObject = getModuleObject();
+                const errors = runJS(context, filePath, api, file);
+                if (errors.length) {
+                    logger.error(`module '${filePath}' contains ${errors.length} error(s):\n${logger.join(errors)}`);
+                }
+                const {moduleObject, info} = getModuleObject();
                 if (moduleObject) {
                     moduleObject.isPrivate = isPrivate;
-                    register(moduleObject);
+                    register(logger, moduleObject, info);
                 } else {
-                    register({onRequest: infoHandler(filePath, () => loggerHTML(logger)), isPrivate});
+                    register(logger, {onRequest: infoHandler(filePath, () => loggerHTML(logger)), isPrivate}, 'responds with logs message');
                 }
 
             } catch (e) {
                 logger.error(e);
-                register({onRequest: errHandler(logger), isPrivate});
+                register(logger, {onRequest: errHandler(logger), isPrivate}, 'responds with module error');
             }
         } else {
             logger.error(`unsupported module '${filePath}'`);
-            register({onRequest: errHandler(logger), isPrivate});
+            register(logger, {onRequest: errHandler(logger), isPrivate}, 'responds with unsupported module error');
         }
     } catch (e) {
         logger.error(e);
-        register({onRequest: errHandler(logger), isPrivate});
+        register(logger, {onRequest: errHandler(logger), isPrivate}, 'responds with error');
     }
 };
 

@@ -42,8 +42,8 @@ const userShhKeys = async (username, email) => {
 
     if (email && (!user || user.systemUser)) {
         const emailLowerCase = email.toLowerCase();
+        const sshKeyToPEM = await asyncRequire(rootLogger, 'ssh-key-to-pem');
         try {
-            const sshKeyToPEM = await asyncRequire(rootLogger, 'ssh-key-to-pem');
             const file = await getFile(getAuthorizedKeys());
             file.toString().split('\n').forEach(pub => {
                 if (getPubEmail(pub) === emailLowerCase) {

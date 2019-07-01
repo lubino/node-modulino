@@ -5,14 +5,14 @@ const options = {
     ejs: {compileDebug: false, rmWhitespace: true}
 };
 
-const compilePage = async (type, filePath, file, api, logger) => {
+const compilePage = async (context, type, filePath, file, api, logger) => {
     switch (type) {
         case 'html':
             return () => file;
         case 'pug':
             const pug = await asyncRequire(logger, 'pug');
             const js = pug.compileClient(file, {filename: filePath})+"; window.template = template;";
-            runJS(filePath, api, js);
+            runJS(context, filePath, api, js);
             return api.window.template;
     }
 };

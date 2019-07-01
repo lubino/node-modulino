@@ -35,6 +35,25 @@ const plainJSON = (o, l = 20, all = []) => {
     return o;
 };
 
+const createTransporter = (context, authentication, serviceKey) => {
+    let service;
+    let auth;
+    if (!authentication) {
+        const config = (serviceKey ? context.email[serviceKey] : context.email) || {};
+        service = config.service || serviceKey;
+        auth = config.auth;
+    } else {
+        service = serviceKey;
+        auth = authentication;
+    }
+
+    if (!service && !authentication) {
+        throw new Error('Mailer transporter is not configured.');
+    }
+
+    return nodemailer.createTransport({service, auth});
+
+};
 
 const mailer = (logger, context, serviceKey, authentication) => {
     let key;
@@ -46,26 +65,31 @@ const mailer = (logger, context, serviceKey, authentication) => {
     let transporter = transporters[key];
     if (!transporter) {
         if (!nodemailer) {
-            asyncRequire(logger, 'nodemailer').then(result => nodemailer = result);
-            //TODO return fake transporter to send email later
-            throw new Error('Service is not installed.');
-        }
-        let service;
-        let auth;
-        if (!authentication) {
-            const config = (serviceKey ? context.email[serviceKey] : context.email) || {};
-            service = config.service || serviceKey;
-            auth = config.auth;
-        } else {
-            service = serviceKey;
-            auth = authentication;
+            try {
+                nodemailer = require('nodemailer');
+            } catch (e) {
+                let items = [];
+                asyncRequire(logger, 'nodemailer').then(result => {
+                    nodemailer = result;
+                    transporter = createTransporter(context, authentication, serviceKey);
+                    transporters[key] = transporter;
+                    items.splice(0, items.length).forEach(({o, cb}) => transporter.sendMail(o, cb));
+                });
+
+                return {
+                    sendMail: (o, cb) => {
+                        if (transporter) {
+                            return transporter.sendMail(o, cb);
+                        }
+                        items.push({o, cb});
+                    }
+                };
+            }
         }
 
-        if (!service && !authentication) {
-            throw new Error('Mailer transporter is not configured.');
-        }
+        transporter = createTransporter(context, authentication, serviceKey);
 
-        transporters[key] = transporter = nodemailer.createTransport({service, auth});
+        transporters[key] = transporter;
     }
     return transporter;
 };
@@ -83,9 +107,9 @@ const sharedStorage = (logger, name, value = {}) => {
 function featuresForContext(context) {
     const {module} = modulesForContext(context);
     const moduleFor = (logger, path) => {
-        logger.debug(`loading module '${path}'`);
         const actual = module(path);
         if (!actual) {
+            logger.debug(`loading empty module '${path}'`);
             const newOne = {};
             module(path, newOne);
             return newOne;
@@ -133,7 +157,7 @@ function featuresForContext(context) {
                 return logger.transformException(new Error(message));
             },
             require: path => {
-                logger.debug(`loading module '${path}'`);
+                logger.debug(`requiring file '${path}'`);
                 if (path === 'api' || path === 'modulino/api') return api;
                 if (path === 'modulino/administration' && context.allowAdministration) return require('./administration');
                 if (path === 'fs' && !context.allowAdministration) throw new api.Error(`'${path}' is forbidden (security concerns)`);

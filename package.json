@@ -1,6 +1,6 @@
 {
   "name": "modulino",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Simple NodeJS Application Server",
   "main": "modulino.js",
   "scripts": {
@@ -12,6 +12,7 @@
   "devDependencies": {},
   "dependencies": {
     "eslint": "^5.7.0",
+    "eval": "^0.1.3",
     "jsonschema": "^1.2.4"
   },
   "repository": {

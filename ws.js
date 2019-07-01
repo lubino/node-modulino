@@ -1,3 +1,8 @@
-const WebSocket = require("ws");
+let WebSocket;
 
-module.exports.createWebSocket = (url, protocols, options) => new WebSocket(url, protocols, options);
+module.exports.createWebSocket = (url, protocols, options) => {
+    if (!WebSocket) {
+        WebSocket = require("ws");
+    }
+    return new WebSocket(url, protocols, options);
+};

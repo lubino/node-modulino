@@ -292,16 +292,34 @@ const registerContext = async (options, {allowAdministration} = {}) => {
 
     context.files = await watchDirAt(path, data => {
         const {newFiles, removedFiles} = data;
-        removedFiles.map(filePath => {
+        for (const filePath of removedFiles) {
             const {paths} = getFileType(filePath);
-            paths.map(urlPath => remove(removeModule(urlPath)))
-        });
-        newFiles.map(filePath => {
+            for (const urlPath of paths) {
+                remove(removeModule(urlPath));
+            }
+        }
+        for (const filePath of newFiles) {
             const fileType = getFileType(filePath);
             const {paths} = fileType;
-            const registerModule = result => paths.map(urlPath => module(urlPath, result));
-            createModule(context, getStaticRequest, filePath, featuresFor, fileType, registerModule);
-        });
+            const registerModule = (logger, result, info) => {
+                for (const urlPath of paths) {
+                    const existing = module(urlPath);
+                    if (existing) {
+                        logger.log(`re-registering module '${filePath}' at '${urlPath}'${info ? ', '+info : ''}`);
+                        for (const key of Object.keys(existing)) {
+                            delete existing[key];
+                        }
+                        Object.assign(existing, result);
+                    } else {
+                        logger.log(`registering module '${filePath}' at '${urlPath}'${info ? ', '+info : ''}`);
+                        module(urlPath, result);
+                    }
+                }
+            };
+            createModule(context, getStaticRequest, filePath, featuresFor, fileType, registerModule).catch(e => {
+                context.logger.error(`can not create module '${filePath}': ${e}`);
+            });
+        }
         if (fileListeners.length) fileListeners.map(listener => listener({id, newFiles, removedFiles}));
     });
     createContextModuleFinder(context, module, options);
