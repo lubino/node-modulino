@@ -11,6 +11,8 @@ const hashParams = (() => {
     return obj;
 })();
 
+const api = {};
+
 const session = client.connect({
     logTargets: false,
     syncContexts: false,
@@ -58,6 +60,18 @@ session.on('message', (name, data) => {
         } else {
             session.send('pty', {start: true});
             session.send('help');
+        }
+    } else if (name === 'api') {
+        for (const [name, value] of Object.entries(data)) {
+            const {data, result, description} = value;
+            const info = `${data} => ${result}\n${description.join('\n')}`;
+            const f = params => {
+                session.send(name, params);
+                return info;
+            };
+            f.toString = () => info;
+            f.info = info;
+            api[name] = f;
         }
     } else {
         console.log(`=> '${name}'`, data);

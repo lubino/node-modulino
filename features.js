@@ -2,8 +2,9 @@ const fs = require('fs');
 const {modulesForContext} = require('./module');
 const {asyncRequire} = require("./installer");
 
-const transporters = {};
+const mailers = {};
 let nodemailer;
+let imap;
 
 const plainJSON = (o, l = 20, all = []) => {
     const type = typeof o;
@@ -35,7 +36,7 @@ const plainJSON = (o, l = 20, all = []) => {
     return o;
 };
 
-const createTransporter = (context, authentication, serviceKey) => {
+const mailerConfiguration = (context, authentication, serviceKey) => {
     let service;
     let auth;
     if (!authentication) {
@@ -51,8 +52,36 @@ const createTransporter = (context, authentication, serviceKey) => {
         throw new Error('Mailer transporter is not configured.');
     }
 
-    return nodemailer.createTransport({service, auth});
+    let cfg;
 
+    if (typeof service === 'string') {
+        const configuration = require('nodemailer/lib/well-known')(service);
+        if (configuration) {
+            const {host, port, secure} = configuration;
+            const isSmtp = host.includes('smtp');
+            cfg = {};
+            cfg.user = auth.user;
+            cfg.password = auth.pass;
+            cfg.host = isSmtp ? host.replace('smtp', 'imap') : host;
+            cfg.port = port === 465 || port === 25 ? (secure ? 993 : 143) : port;
+            cfg.tls = secure;
+        }
+    }
+
+    return {service, auth, cfg};
+
+};
+
+const createMailer = (context, authentication, serviceKey) => {
+    const {service, auth, cfg} = mailerConfiguration(context, authentication, serviceKey);
+    const transport = nodemailer.createTransport({service, auth});
+    return {
+        sendMail: (o, cb) => transport.sendMail(o, cb),
+        withImap: (cb) => cb(new imap(cfg), imap),
+        createImap: async () => {
+            return {imap: new imap(cfg), Imap: imap};
+        }
+    };
 };
 
 const mailer = (logger, context, serviceKey, authentication) => {
@@ -62,36 +91,50 @@ const mailer = (logger, context, serviceKey, authentication) => {
     } else {
         key = JSON.stringify({s: serviceKey, a: authentication});
     }
-    let transporter = transporters[key];
-    if (!transporter) {
-        if (!nodemailer) {
+    let mailer = mailers[key];
+    if (!mailer) {
+        if (!nodemailer || !imap) {
             try {
                 nodemailer = require('nodemailer');
+                imap = require('imap');
             } catch (e) {
-                let items = [];
+                let mailsToSend = [];
+                let imapsToProcess = [];
+                let imapResolvers = [];
                 asyncRequire(logger, 'nodemailer').then(result => {
                     nodemailer = result;
-                    transporter = createTransporter(context, authentication, serviceKey);
-                    transporters[key] = transporter;
-                    items.splice(0, items.length).forEach(({o, cb}) => transporter.sendMail(o, cb));
+                    asyncRequire(logger, 'imap').then(result => {
+                        imap = result;
+                        mailer = createMailer(context, authentication, serviceKey);
+                        mailers[key] = mailer;
+                        mailsToSend.splice(0, mailsToSend.length).forEach(({o, cb}) => mailer.sendMail(o, cb));
+                        imapsToProcess.splice(0, imapsToProcess.length).forEach((cb) => mailer.withImap(cb));
+                        imapResolvers.splice(0, imapResolvers.length).forEach((resolve) => mailer.createImap().then(resolve));
+                    });
                 });
 
                 return {
                     sendMail: (o, cb) => {
-                        if (transporter) {
-                            return transporter.sendMail(o, cb);
+                        if (mailer) {
+                            return mailer.sendMail(o, cb);
                         }
-                        items.push({o, cb});
-                    }
+                        mailsToSend.push({o, cb});
+                    },
+                    withImap: (cb) => {
+                        if (mailer) {
+                            return mailer.withImap(cb);
+                        }
+                        imapsToProcess.push(cb);
+                    },
+                    createImap: () => new Promise(resolve => imapResolvers.push(resolve))
                 };
             }
         }
 
-        transporter = createTransporter(context, authentication, serviceKey);
-
-        transporters[key] = transporter;
+        mailer = createMailer(context, authentication, serviceKey);
+        mailers[key] = mailer;
     }
-    return transporter;
+    return mailer;
 };
 
 const data = {};

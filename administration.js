@@ -182,6 +182,7 @@ const methods = {
     },
     help: () => {
         /** Prints this information. */
+        const api = {};
         const message = 'Available methods:\n'+Object.entries(methods).map(([name, f]) => {
             const s = f.toString();
             const a = s.indexOf('=>');
@@ -203,16 +204,17 @@ const methods = {
                     }
                 }
             }
-            const info = c.length ? '\n   '+c.map(i => {
+            const description = c.map(i => {
                 const s = i.trim();
                 return s.startsWith('*') ? s.substr(1).trim() : s;
-            }).filter(i => i).join('\n   ')+'\n' : '';
-
+            }).filter(i => i);
+            const info = c.length ? '\n   '+description.join('\n   ')+'\n' : '';
             const data = (b < a) && (b < e) ? s.substring(b, e).trim() : '';
+            api[name] = {data, result, description};
             return ` - ('${name}'${data ? ', ' : ''}${data})${result}${info}`;
         }).join('\n');
         const log = {message};
-        return {log};
+        return {log, api};
     }
 };
 
