@@ -6,7 +6,7 @@ const {getSession} = require("./sessions");
 const wrap = (listener, logger, context) => async (req, res, next) => {
     try {
         logger.clean();
-        logger.debug(`received request for '${req.method}'`);
+        logger.debug(`${req.method} "${req.url}"`);
         req.getSession = (options) => getSession(req, res, context, options);
         const promise = listener(req, res, next);
         if (promise != null) {
